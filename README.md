@@ -269,11 +269,11 @@ ACME Clients (certbot, acme.sh, Caddy, ...)
     ├───────────────────────────────┤
     │        Service Layer          │
     │  AccountService, OrderService │
-    │  ChallengeService, CertSvc   │
+    │  ChallengeService, CertSvc    │
     ├──────────┬────────────────────┤
     │Repository│    CA Backend      │
     │  Layer   │ internal/external/ │
-    │(PyPGKit) │ hsm/acme_proxy/   │
+    │(PyPGKit) │ hsm/acme_proxy/    │
     │          │ ext:custom         │
     ├──────────┴────────────────────┤
     │     DI Container (context.py) │

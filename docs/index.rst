@@ -29,27 +29,27 @@ Architecture
                                     |
                             HTTPS / RFC 8555
                                     |
-                    ┌───────────────────────────────┐
+                    ┌────────────────────────────────┐
                     │         Flask API Layer        │
                     │  directory, nonce, account,    │
                     │  order, authz, challenge,      │
                     │  certificate, key-change       │
-                    ├───────────────────────────────┤
+                    ├────────────────────────────────┤
                     │        Service Layer           │
                     │  AccountService, OrderService, │
                     │  ChallengeService, CertService │
-                    ├──────────┬────────────────────┤
+                    ├──────────┬─────────────────────┤
                     │Repository│    CA Backend       │
-                    │  Layer   │  ┌──────────────┐  │
+                    │  Layer   │  ┌───────────────┐  │
                     │(PyPGKit) │  │  internal     │  │
                     │          │  │  external     │  │
                     │          │  │  hsm          │  │
                     │          │  │  acme_proxy   │  │
                     │          │  │  ext:custom   │  │
-                    │          │  └──────────────┘  │
-                    ├──────────┴────────────────────┤
+                    │          │  └───────────────┘  │
+                    ├──────────┴─────────────────────┤
                     │     DI Container (context.py)  │
-                    └───────────────┬───────────────┘
+                    └───────────────┬────────────────┘
                                     │
                             PostgreSQL 14+
 
