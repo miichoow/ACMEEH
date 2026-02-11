@@ -63,7 +63,7 @@ acmeeh = ["config/schema.json", "db/schema.sql", "notifications/templates/*", "p
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.coverage.run]
 source = ["acmeeh"]
