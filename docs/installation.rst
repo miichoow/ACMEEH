@@ -42,7 +42,7 @@ Clone the Repository
 
 .. code-block:: bash
 
-   git clone https://github.com/miichoow/ACMEEW.git
+   git clone https://github.com/miichoow/ACMEEH.git
    cd acmeeh
 
 Create a Virtual Environment

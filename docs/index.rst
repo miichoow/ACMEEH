@@ -59,7 +59,7 @@ Quick Start
 .. code-block:: bash
 
    # Clone and install
-   git clone https://github.com/miichoow/ACMEEW.git
+   git clone https://github.com/miichoow/ACMEEH.git
    cd acmeeh
    python -m venv .venv
    .venv/bin/pip install flask cryptography dnspython jinja2 psycopg[binary]
