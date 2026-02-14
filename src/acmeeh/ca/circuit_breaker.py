@@ -82,6 +82,11 @@ class CircuitBreakerCABackend(CABackend):
         self._half_open_calls = 0
 
     @property
+    def deferred(self) -> bool:
+        """Delegate to the wrapped backend."""
+        return self._backend.deferred
+
+    @property
     def state(self) -> str:
         """Current circuit state as a string."""
         with self._lock:

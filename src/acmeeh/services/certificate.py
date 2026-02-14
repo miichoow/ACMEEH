@@ -10,6 +10,7 @@ import hashlib
 import hmac as _hmac
 import logging
 import secrets
+import threading
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4
 
@@ -289,6 +290,64 @@ class CertificateService:
         # Generate serial number for backends that need it
         serial_number = self._generate_serial()
 
+        # Pre-compute values needed by _complete_signing
+        pub_key_der = csr.public_key().public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        pk_fingerprint = hashlib.sha256(pub_key_der).hexdigest()
+        san_vals = _extract_san_values(csr)
+
+        if self._backend.deferred:
+            # Deferred signing: run in a background thread so the HTTP
+            # request returns immediately with order status PROCESSING.
+            # The client will poll (RFC 8555 §7.4 Retry-After).
+            t = threading.Thread(
+                target=self._complete_signing,
+                args=(
+                    order,
+                    csr,
+                    profile,
+                    validity_days,
+                    serial_number,
+                    pk_fingerprint,
+                    san_vals,
+                ),
+                daemon=True,
+            )
+            t.start()
+            return order
+
+        # Synchronous signing (normal path)
+        return self._complete_signing(
+            order,
+            csr,
+            profile,
+            validity_days,
+            serial_number,
+            pk_fingerprint,
+            san_vals,
+        )
+
+    def _complete_signing(  # noqa: PLR0913
+        self,
+        order: Order,
+        csr: x509.CertificateSigningRequest,
+        profile: Any,
+        validity_days: int,
+        serial_number: int,
+        pk_fingerprint: str,
+        san_vals: list[str] | None,
+    ) -> Order:
+        """Sign the CSR and store the certificate.
+
+        Called synchronously for normal backends or in a daemon thread
+        for deferred backends.  Handles its own errors — on ``CAError``
+        the order is transitioned to INVALID.
+        """
+        order_id = order.id
+        account_id = order.account_id
+
         # Call CA backend to sign
         try:
             result = self._backend.sign(
@@ -327,20 +386,14 @@ class CertificateService:
                         "error_detail": exc.detail,
                     },
                 )
+            if self._backend.deferred:
+                # Running in background thread — cannot raise HTTP error
+                return order  # type: ignore[return-value]
             raise AcmeProblem(
                 SERVER_INTERNAL,
                 "Certificate signing failed",
                 500,
             ) from exc
-
-        # Compute public key fingerprint and SAN values
-        pub_key_der = csr.public_key().public_bytes(
-            serialization.Encoding.DER,
-            serialization.PublicFormat.SubjectPublicKeyInfo,
-        )
-        pk_fingerprint = hashlib.sha256(pub_key_der).hexdigest()
-
-        san_vals = _extract_san_values(csr)
 
         # Store certificate and transition order atomically
         from acmeeh.models.certificate import Certificate  # noqa: PLC0415

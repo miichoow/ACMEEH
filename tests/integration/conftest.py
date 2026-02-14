@@ -668,6 +668,10 @@ class TestCABackend:
     def root_key(self):
         return self._root_key
 
+    @property
+    def deferred(self):
+        return False
+
     def startup_check(self):
         pass
 

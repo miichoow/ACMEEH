@@ -164,6 +164,16 @@ class CABackend(abc.ABC):
 
         """
 
+    @property
+    def deferred(self) -> bool:
+        """Whether ``sign()`` may block for an unbounded amount of time.
+
+        Backends that return ``True`` signal that finalization should run
+        in a background thread so the HTTP request can return immediately
+        with order status ``processing`` (RFC 8555 §7.4).
+        """
+        return False
+
     def startup_check(self) -> None:
         """Optional startup health check.
 

@@ -59,6 +59,7 @@ def _make_service(
     transition_returns=None,
 ):
     """Build a CertificateService with mocked dependencies."""
+    ca_backend.deferred = False
     order_id = order.id if order else uuid4()
     account_id = order.account_id if order else uuid4()
 
@@ -199,6 +200,7 @@ class TestCABackendNotification:
         """Notification service should be called when CA signing fails."""
         order = _make_ready_order()
         ca_backend = MagicMock()
+        ca_backend.deferred = False
         ca_backend.sign.side_effect = CAError("HSM offline")
 
         notifier = MagicMock()

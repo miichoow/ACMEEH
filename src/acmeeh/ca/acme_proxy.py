@@ -50,6 +50,11 @@ class AcmeProxyBackend(CABackend):
         self._identifier_cls: Any = None
         self._lock = threading.Lock()
 
+    @property
+    def deferred(self) -> bool:
+        """The upstream ACME flow may block indefinitely."""
+        return True
+
     def startup_check(self) -> None:  # noqa: PLR0912
         """Validate configuration and initialise the ACMEOW client.
 

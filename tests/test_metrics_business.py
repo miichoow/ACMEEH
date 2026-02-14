@@ -482,6 +482,7 @@ class TestCertificateIssuedMetric:
         cert_repo = MagicMock()
         order_repo = MagicMock()
         ca_backend = MagicMock()
+        ca_backend.deferred = False
 
         order = _make_order(status=OrderStatus.READY)
         order_repo.find_by_id.return_value = order
@@ -601,6 +602,7 @@ class TestCASigningErrorMetric:
         cert_repo = MagicMock()
         order_repo = MagicMock()
         ca_backend = MagicMock()
+        ca_backend.deferred = False
 
         order = _make_order(status=OrderStatus.READY)
         order_repo.find_by_id.return_value = order

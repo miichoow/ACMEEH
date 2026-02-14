@@ -1140,6 +1140,7 @@ def ca_settings():
 @pytest.fixture()
 def ca_backend():
     backend = MagicMock()
+    backend.deferred = False
     now = datetime.now(UTC)
     backend.sign.return_value = IssuedCertificate(
         pem_chain="-----BEGIN CERTIFICATE-----\nMIIB...\n-----END CERTIFICATE-----\n",
