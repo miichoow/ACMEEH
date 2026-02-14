@@ -74,10 +74,7 @@ class ChallengeRegistry:
         """
         for type_str in self._settings.enabled:
             try:
-                if (
-                    self._settings.auto_accept
-                    and type_str in _AUTO_ACCEPT_VALIDATORS
-                ):
+                if self._settings.auto_accept and type_str in _AUTO_ACCEPT_VALIDATORS:
                     self._load_builtin_from(
                         type_str,
                         _AUTO_ACCEPT_VALIDATORS[type_str],

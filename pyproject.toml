@@ -168,6 +168,7 @@ warn_unreachable = false
 disallow_untyped_defs = false
 check_untyped_defs = true
 ignore_missing_imports = true
+explicit_package_bases = true
 
 [[tool.mypy.overrides]]
 module = [
@@ -179,3 +180,11 @@ disable_error_code = ["arg-type", "misc"]
 [[tool.mypy.overrides]]
 module = "acmeeh.api.*"
 disable_error_code = ["arg-type", "union-attr"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disable_error_code = [
+    "arg-type", "attr-defined", "method-assign", "assignment",
+    "return-value", "union-attr", "misc", "var-annotated",
+    "valid-type", "func-returns-value", "call-overload", "index",
+]

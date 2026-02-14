@@ -364,10 +364,10 @@ Challenge validation configuration.
      - string[]
      - ``[http-01]``
      - Enabled challenge types: ``http-01``, ``dns-01``, ``tls-alpn-01``
-   * - ``auto_validate``
+   * - ``auto_accept``
      - boolean
-     - ``true``
-     - Automatically validate challenges when client responds
+     - ``false``
+     - Automatically accept all challenges without validation
    * - ``retry_after_seconds``
      - integer
      - ``3``
