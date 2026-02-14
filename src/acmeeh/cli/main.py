@@ -113,6 +113,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _print_error(message: str) -> None:
     """Print a user-facing error to stderr."""
+    print(f"Error: {message}", file=sys.stderr)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -231,3 +232,8 @@ def _run_serve(config, args) -> None:
 
 def _print_settings_summary(config) -> None:
     """Print a short summary of the loaded configuration."""
+    s = config.settings
+    print(f"ACMEEH v{_get_version()}")
+    print(f"  Server:   {s.server.bind}:{s.server.port}")
+    print(f"  CA:       {s.ca.backend}")
+    print(f"  Database: {s.database.host}:{s.database.port}/{s.database.database}")
