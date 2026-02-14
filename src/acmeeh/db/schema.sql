@@ -176,6 +176,7 @@ CREATE TABLE IF NOT EXISTS challenges (
     error               JSONB,
     validated_at        TIMESTAMPTZ,
     retry_count         INTEGER         NOT NULL DEFAULT 0,
+    next_retry_at       TIMESTAMPTZ,
     locked_by           VARCHAR(128),
     locked_at           TIMESTAMPTZ,
     created_at          TIMESTAMPTZ     NOT NULL DEFAULT now(),
