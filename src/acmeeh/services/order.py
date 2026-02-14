@@ -223,7 +223,9 @@ class OrderService:
 
         # Enabled challenge types
         enabled_types = [
-            ChallengeType(t) for t in self._challenge_settings.enabled if not t.startswith("ext:")
+            ChallengeType(t)
+            for t in self._challenge_settings.enabled
+            if not t.startswith("ext:")
         ]
 
         # Atomic creation: order + authzs + challenges

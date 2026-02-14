@@ -36,9 +36,14 @@ _BUILTIN_VALIDATORS: dict[str, tuple[str, str, str | None]] = {
     "http-01": ("acmeeh.challenge.http01", "Http01Validator", "http01"),
     "dns-01": ("acmeeh.challenge.dns01", "Dns01Validator", "dns01"),
     "tls-alpn-01": ("acmeeh.challenge.tls_alpn01", "TlsAlpn01Validator", "tlsalpn01"),
-    "auto-http": ("acmeeh.challenge.auto_accept", "AutoAcceptHttpValidator", None),
-    "auto-dns": ("acmeeh.challenge.auto_accept", "AutoAcceptDnsValidator", None),
-    "auto-tls": ("acmeeh.challenge.auto_accept", "AutoAcceptTlsValidator", None),
+}
+
+# Auto-accept counterparts for built-in validators, keyed by the same
+# standard ACME type name.  Used when ``challenges.auto_accept`` is true.
+_AUTO_ACCEPT_VALIDATORS: dict[str, tuple[str, str, str | None]] = {
+    "http-01": ("acmeeh.challenge.auto_accept", "AutoAcceptHttpValidator", None),
+    "dns-01": ("acmeeh.challenge.auto_accept", "AutoAcceptDnsValidator", None),
+    "tls-alpn-01": ("acmeeh.challenge.auto_accept", "AutoAcceptTlsValidator", None),
 }
 
 
@@ -60,13 +65,28 @@ class ChallengeRegistry:
     def _load(self) -> None:
         """Load all enabled validators from configuration.
 
+        When ``auto_accept`` is enabled and the type has an auto-accept
+        counterpart, the auto-accept validator is loaded instead of the
+        real one.
+
         Failures for individual types are logged as warnings — other
         types still load successfully.
         """
         for type_str in self._settings.enabled:
             try:
-                if type_str in _BUILTIN_VALIDATORS:
-                    self._load_builtin(type_str)
+                if (
+                    self._settings.auto_accept
+                    and type_str in _AUTO_ACCEPT_VALIDATORS
+                ):
+                    self._load_builtin_from(
+                        type_str,
+                        _AUTO_ACCEPT_VALIDATORS[type_str],
+                    )
+                elif type_str in _BUILTIN_VALIDATORS:
+                    self._load_builtin_from(
+                        type_str,
+                        _BUILTIN_VALIDATORS[type_str],
+                    )
                 elif type_str.startswith("ext:"):
                     self._load_external(type_str[4:])
                 else:
@@ -80,9 +100,13 @@ class ChallengeRegistry:
                     type_str,
                 )
 
-    def _load_builtin(self, type_str: str) -> None:
-        """Load a built-in validator and register it."""
-        mod_path, cls_name, settings_attr = _BUILTIN_VALIDATORS[type_str]
+    def _load_builtin_from(
+        self,
+        type_str: str,
+        entry: tuple[str, str, str | None],
+    ) -> None:
+        """Load a validator from a registry entry and register it."""
+        mod_path, cls_name, settings_attr = entry
         module = importlib.import_module(mod_path)
         cls = getattr(module, cls_name)
 

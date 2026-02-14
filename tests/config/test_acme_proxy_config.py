@@ -275,14 +275,18 @@ class TestAdditionalChecks:
         assert any("email" in e for e in errors)
         assert any("challenge_handler" in e for e in errors)
 
-    def test_auto_challenge_types_accepted(self, tmp_path):
+    def test_auto_accept_with_standard_types(self, tmp_path):
         cfg = _minimal_config()
-        cfg["challenges"] = {"enabled": ["auto-http", "auto-dns", "auto-tls"]}
+        cfg["challenges"] = {
+            "enabled": ["http-01", "dns-01", "tls-alpn-01"],
+            "auto_accept": True,
+        }
         cfg_path = tmp_path / "config.yaml"
         cfg_path.write_text(
             yaml.safe_dump(cfg, default_flow_style=False, sort_keys=False), encoding="utf-8"
         )
         config = AcmeehConfig(config_file=str(cfg_path), schema_file="unused")
-        assert "auto-http" in config.settings.challenges.enabled
-        assert "auto-dns" in config.settings.challenges.enabled
-        assert "auto-tls" in config.settings.challenges.enabled
+        assert config.settings.challenges.auto_accept is True
+        assert "http-01" in config.settings.challenges.enabled
+        assert "dns-01" in config.settings.challenges.enabled
+        assert "tls-alpn-01" in config.settings.challenges.enabled

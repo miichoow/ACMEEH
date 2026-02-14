@@ -252,6 +252,8 @@ See the [CA backends documentation](docs/ca-backends.rst) for detailed setup ins
 | `dns-01` | DNS TXT record query at `_acme-challenge.{domain}` |
 | `tls-alpn-01` | TLS connection to port 443 with ALPN protocol `acme-tls/1` |
 
+For the `acme_proxy` backend, set `challenges.auto_accept: true` to auto-accept all downstream challenges (real validation happens upstream).
+
 Custom challenge validators can be added as plugins.
 
 ## Architecture

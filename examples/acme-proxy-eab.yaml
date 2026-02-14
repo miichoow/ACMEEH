@@ -53,10 +53,10 @@ security:
     enforce_account_allowlist: true
 challenges:
   enabled:
-  - auto-http
-  - auto-dns
-  - auto-tls
-  auto_validate: true
+  - http-01
+  - dns-01
+  - tls-alpn-01
+  auto_accept: true
 ca:
   backend: acme_proxy
   default_validity_days: 90

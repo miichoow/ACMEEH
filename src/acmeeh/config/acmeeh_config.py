@@ -38,9 +38,6 @@ _KNOWN_CHALLENGE_TYPES = frozenset(
         "http-01",
         "dns-01",
         "tls-alpn-01",
-        "auto-http",
-        "auto-dns",
-        "auto-tls",
     }
 )
 

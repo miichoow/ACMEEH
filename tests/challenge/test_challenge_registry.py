@@ -18,6 +18,7 @@ from acmeeh.core.types import ChallengeType
 
 def _make_settings(enabled: list[str], **kwargs) -> SimpleNamespace:
     """Create a mock ChallengeSettings with given enabled types."""
+    kwargs.setdefault("auto_accept", False)
     return SimpleNamespace(enabled=enabled, **kwargs)
 
 

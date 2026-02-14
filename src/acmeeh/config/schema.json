@@ -234,7 +234,7 @@
             "auto_validate":   { "type": "boolean", "default": true }
           }
         },
-        "auto_validate":   { "type": "boolean", "default": true },
+        "auto_accept":   { "type": "boolean", "default": false },
         "retry_after_seconds": { "$ref": "#/$defs/positive_integer", "default": 3 },
         "backoff_base_seconds": { "$ref": "#/$defs/positive_integer", "default": 5 },
         "backoff_max_seconds":  { "$ref": "#/$defs/positive_integer", "default": 300 },

@@ -124,7 +124,7 @@ def _challenge_settings() -> ChallengeSettings:
 
     return ChallengeSettings(
         enabled=("http-01",),
-        auto_validate=True,
+        auto_accept=False,
         http01=Http01Settings(
             port=80,
             timeout_seconds=10,

@@ -350,7 +350,7 @@ class ChallengeSettings:
     """Aggregate challenge configuration for all challenge types."""
 
     enabled: tuple[str, ...]
-    auto_validate: bool
+    auto_accept: bool
     http01: Http01Settings
     dns01: Dns01Settings
     tlsalpn01: TlsAlpn01Settings
@@ -368,7 +368,7 @@ def _build_challenges(data: dict | None) -> ChallengeSettings:
     bw = d.get("background_worker") or {}
     return ChallengeSettings(
         enabled=tuple(d.get("enabled", ["http-01"])),
-        auto_validate=d.get("auto_validate", True),
+        auto_accept=d.get("auto_accept", False),
         http01=Http01Settings(
             port=h.get("port", 80),
             timeout_seconds=h.get("timeout_seconds", 10),

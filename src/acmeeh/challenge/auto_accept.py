@@ -7,7 +7,10 @@ the downstream client's challenges are auto-accepted because the
 actual domain validation happens upstream between ACMEEH and the
 real ACME CA.
 
-Configuration names: ``auto-http``, ``auto-dns``, ``auto-tls``.
+Enable via ``challenges.auto_accept: true`` in the configuration file.
+Standard challenge type names (``http-01``, ``dns-01``, ``tls-alpn-01``)
+are used; the registry transparently substitutes auto-accept validators
+when the flag is set.
 """
 
 from __future__ import annotations
