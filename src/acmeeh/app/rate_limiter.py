@@ -106,32 +106,53 @@ class DatabaseRateLimiter:
         if rule is None:
             return
 
+        # Fast fail-open: if the pool is under pressure, skip the DB
+        # check entirely instead of blocking for connection_timeout
+        # seconds and causing cascading exhaustion.
+        from acmeeh.db.init import is_pool_healthy  # noqa: PLC0415
+
+        if not is_pool_healthy(self._db):
+            log.debug(
+                "Rate limiter: pool under pressure — fail-open for %s:%s",
+                category,
+                key,
+            )
+            return
+
         now = datetime.now(UTC)
         epoch = now.timestamp()
         window_start_ts = math.floor(epoch / rule.window_seconds) * rule.window_seconds
         window_start = datetime.fromtimestamp(window_start_ts, tz=UTC)
         compound_key = f"{category}:{key}"
 
-        # Atomic upsert + fetch
-        self._db.execute(
-            "INSERT INTO rate_limit_counters (compound_key, window_start, counter) "
-            "VALUES (%s, %s, 1) "
-            "ON CONFLICT (compound_key, window_start) "
-            "DO UPDATE SET counter = rate_limit_counters.counter + 1",
-            (compound_key, window_start),
-        )
-
-        # Read current window total
-        total = self._db.fetch_value(
-            "SELECT SUM(counter) FROM rate_limit_counters "
-            "WHERE compound_key = %s AND window_start >= %s",
-            (compound_key, window_start),
-        )
+        # Atomic upsert + fetch in a single SQL statement to avoid
+        # checking out two separate pool connections.
+        try:
+            total = self._db.fetch_value(
+                "WITH upsert AS ("
+                "  INSERT INTO rate_limit_counters (compound_key, window_start, counter) "
+                "  VALUES (%s, %s, 1) "
+                "  ON CONFLICT (compound_key, window_start) "
+                "  DO UPDATE SET counter = rate_limit_counters.counter + 1 "
+                "  RETURNING counter"
+                ") SELECT counter FROM upsert",
+                (compound_key, window_start),
+            )
+        except Exception:  # noqa: BLE001
+            # Fail-open: if the pool is exhausted or the DB is unreachable,
+            # allow the request through rather than blocking for 30s and
+            # causing cascading pool exhaustion.
+            log.warning(
+                "Rate limiter DB check failed (fail-open): key=%s category=%s",
+                key,
+                category,
+            )
+            return
 
         if total is not None and total > rule.requests:
             retry_after = rule.window_seconds - int(epoch - window_start_ts)
             retry_after = max(retry_after, 1)
-            from acmeeh.logging import security_events
+            from acmeeh.logging import security_events  # noqa: PLC0415
 
             security_events.rate_limit_exceeded(key, category, key)
             raise AcmeProblem(
@@ -141,7 +162,7 @@ class DatabaseRateLimiter:
                 headers={"Retry-After": str(retry_after)},
             )
 
-    def gc(self, max_age_seconds: int | None = None) -> int:
+    def gc(self, max_age_seconds: int | None = None, *, conn=None) -> int:
         """Delete expired rate limit counters. Returns rows deleted."""
         if max_age_seconds is None:
             max_age_seconds = self._settings.gc_max_age_seconds
@@ -149,7 +170,8 @@ class DatabaseRateLimiter:
             time.time() - max_age_seconds,
             tz=UTC,
         )
-        return self._db.execute(
+        db = conn or self._db
+        return db.execute(
             "DELETE FROM rate_limit_counters WHERE window_start < %s",
             (cutoff,),
         )

@@ -69,6 +69,7 @@ class CRLManager:
         self._last_revocation_check: float = 0.0
         self._shutdown = shutdown_coordinator
         self._db = db
+        self._created_at: float = time.monotonic()
 
     def get_crl(self) -> bytes:  # noqa: PLR0912
         """Return the cached CRL, rebuilding if stale."""
@@ -94,6 +95,16 @@ class CRLManager:
 
     def _get_crl_locked(self) -> bytes:
         """Perform the actual CRL build or cache refresh while locked."""
+        # If we have a cached CRL and the pool is under pressure,
+        # serve the stale CRL instead of blocking on DB operations.
+        if self._cached_crl is not None and self._db is not None:
+            from acmeeh.db.init import is_pool_healthy  # noqa: PLC0415
+
+            if not is_pool_healthy(self._db):
+                log.debug("CRL: pool under pressure — serving stale CRL")
+                self._cached_at = time.monotonic()
+                return self._cached_crl
+
         # In HA mode, try to read from shared DB cache first
         if self._db is not None:
             db_crl = self._read_db_cache()
@@ -170,9 +181,15 @@ class CRLManager:
         }
 
     def _is_stale(self) -> bool:
-        """Return True when cache age exceeds 2x the rebuild interval."""
+        """Return True when cache age exceeds 2x the rebuild interval.
+
+        During the startup grace period (one full rebuild interval after
+        creation), a missing CRL is not considered stale — the first
+        rebuild cycle simply hasn't had time to run yet.
+        """
         if self._cached_crl is None:
-            return True
+            age_since_creation = time.monotonic() - self._created_at
+            return age_since_creation > self._settings.rebuild_interval_seconds
         age = time.monotonic() - self._cached_at
         return age > (_STALE_MULTIPLIER * self._settings.rebuild_interval_seconds)
 
@@ -199,32 +216,41 @@ class CRLManager:
             return None
 
     def _write_db_cache(self, crl_bytes: bytes) -> None:
-        """Write CRL to shared DB cache using advisory lock."""
+        """Write CRL to shared DB cache using advisory lock.
+
+        All operations run on a **single** connection so the session-level
+        advisory lock is acquired and released on the same backend session.
+        Using separate ``self._db`` calls would check out different pool
+        connections, leaking the lock on the acquiring connection.
+        """
+        import contextlib  # noqa: PLC0415
+
         try:
-            # Try advisory lock -- if we can't get it, another instance
-            # is writing
-            got_lock = self._db.fetch_value(
-                "SELECT pg_try_advisory_lock(%s)",
-                (self._ADVISORY_LOCK_ID,),
-            )
-            if not got_lock:
-                return
-            try:
-                self._db.execute(
-                    "INSERT INTO crl_cache "
-                    "(id, crl_der, built_at, revoked_count) "
-                    "VALUES (1, %s, now(), %s) "
-                    "ON CONFLICT (id) DO UPDATE SET "
-                    "  crl_der = EXCLUDED.crl_der, "
-                    "  built_at = EXCLUDED.built_at, "
-                    "  revoked_count = EXCLUDED.revoked_count",
-                    (crl_bytes, self._last_revoked_count),
-                )
-            finally:
-                self._db.execute(
-                    "SELECT pg_advisory_unlock(%s)",
+            with self._db.connection() as conn:
+                row = conn.execute(
+                    "SELECT pg_try_advisory_lock(%s)",
                     (self._ADVISORY_LOCK_ID,),
-                )
+                ).fetchone()
+                got_lock = bool(row and row[0])
+                if not got_lock:
+                    return
+                try:
+                    conn.execute(
+                        "INSERT INTO crl_cache "
+                        "(id, crl_der, built_at, revoked_count) "
+                        "VALUES (1, %s, now(), %s) "
+                        "ON CONFLICT (id) DO UPDATE SET "
+                        "  crl_der = EXCLUDED.crl_der, "
+                        "  built_at = EXCLUDED.built_at, "
+                        "  revoked_count = EXCLUDED.revoked_count",
+                        (crl_bytes, self._last_revoked_count),
+                    )
+                finally:
+                    with contextlib.suppress(Exception):
+                        conn.execute(
+                            "SELECT pg_advisory_unlock(%s)",
+                            (self._ADVISORY_LOCK_ID,),
+                        )
         except Exception:  # noqa: BLE001
             log.warning(
                 "Failed to write CRL to DB cache",

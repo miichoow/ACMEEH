@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from pypgkit import BaseRepository, Database
 
 from acmeeh.models.nonce import Nonce
+
+log = logging.getLogger(__name__)
 
 
 class NonceRepository(BaseRepository[Nonce]):
@@ -52,9 +56,29 @@ class NonceRepository(BaseRepository[Nonce]):
 
         return consumed
 
-    def gc_expired(self) -> int:
-        """Delete expired nonces. Returns the count of deleted rows."""
+    def bulk_create(self, nonces: list[Nonce]) -> int:
+        """Bulk-insert nonces in a single multi-row INSERT.
+
+        Uses one connection checkout for the entire batch instead of one
+        per nonce — critical for reducing pool pressure under load.
+
+        Returns the number of rows inserted.
+        """
+        if not nonces:
+            return 0
         db = Database.get_instance()
+        placeholders = ", ".join(["(%s, %s)"] * len(nonces))
+        params: list = []
+        for n in nonces:
+            params.extend([n.nonce, n.expires_at])
+        return db.execute(
+            f"INSERT INTO nonces (nonce, expires_at) VALUES {placeholders}",
+            tuple(params),
+        )
+
+    def gc_expired(self, *, conn=None) -> int:
+        """Delete expired nonces. Returns the count of deleted rows."""
+        db = conn or Database.get_instance()
         return db.execute(
             "DELETE FROM nonces WHERE expires_at <= now()",
         )

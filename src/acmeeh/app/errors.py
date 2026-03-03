@@ -131,6 +131,24 @@ class AcmeProblem(Exception):
 # ---------------------------------------------------------------------------
 
 
+def _is_pool_timeout(exc: Exception) -> bool:
+    """Check whether *exc* (or anything in its ``__cause__`` chain) is a pool timeout.
+
+    Uses class-name matching so we don't need a hard import of
+    ``psycopg_pool`` or ``pypgkit.exceptions`` — those may not be
+    installed in every environment.
+    """
+    current: BaseException | None = exc
+    while current is not None:
+        cls_name = type(current).__name__
+        if cls_name in ("PoolTimeout", "DatabaseConnectionError"):
+            return True
+        if "couldn't get a connection" in str(current):
+            return True
+        current = current.__cause__
+    return False
+
+
 def register_error_handlers(app: Flask) -> None:
     """Attach handlers that produce RFC 7807 responses for all errors."""
 
@@ -150,6 +168,19 @@ def register_error_handlers(app: Flask) -> None:
 
     @app.errorhandler(Exception)
     def _handle_unhandled(exc: Exception):
+        # Pool timeout → 503 (not 500) so clients retry instead of
+        # treating it as a permanent failure.  Logged as WARNING
+        # (not ERROR) since it's an expected condition under load.
+        if _is_pool_timeout(exc):
+            log.warning("Pool timeout during request: %s", exc)
+            problem = AcmeProblem(
+                SERVER_INTERNAL,
+                "Server is temporarily overloaded. Please retry.",
+                503,
+                headers={"Retry-After": "5"},
+            )
+            return problem.to_response()
+
         # HTTPException subclasses are already caught above; this
         # handler covers everything else (genuine 500s).
         log.exception("Unhandled exception during request")

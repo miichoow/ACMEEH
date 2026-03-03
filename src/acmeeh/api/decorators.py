@@ -35,6 +35,21 @@ from acmeeh.core.types import AccountStatus
 log = logging.getLogger(__name__)
 
 
+# Endpoints that must never waste a DB connection on nonce generation.
+# Health probes, directory (static GET), and admin routes are not ACME
+# protocol exchanges and don't need Replay-Nonce.
+_NONCE_SKIP_ENDPOINTS = frozenset({
+    "livez",
+    "healthz",
+    "readyz",
+})
+
+_NONCE_SKIP_PREFIXES = (
+    "admin_api.",
+    "metrics.",
+)
+
+
 def add_acme_headers(response):
     """After-request hook: add standard ACME headers to every response.
 
@@ -42,20 +57,39 @@ def add_acme_headers(response):
     - ``Link``: directory URL with rel="index"
     - ``Cache-Control: no-store``
 
-    Skips admin API endpoints to avoid leaking ACME nonces.
+    Skips health probes, admin API, and error responses to avoid
+    wasting pool connections on non-ACME traffic.
     """
     endpoint = request.endpoint or ""
-    if endpoint.startswith("admin_api."):
+
+    # Fast path: skip non-ACME endpoints entirely
+    if endpoint in _NONCE_SKIP_ENDPOINTS or endpoint.startswith(_NONCE_SKIP_PREFIXES):
         return response
 
     container = get_container()
 
-    # Fresh nonce
+    # Skip nonce generation for error responses (4xx/5xx).  Clients
+    # that receive an error will request a fresh nonce explicitly via
+    # HEAD /new-nonce before retrying — no need to burn a pool
+    # connection here.
+    if response.status_code >= 400:  # noqa: PLR2004
+        response.headers["Link"] = f'<{container.urls.directory}>;rel="index"'
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    # Fresh nonce — uses create_if_healthy() which never blocks
+    # waiting for a pool connection.  Returns None when the pool is
+    # exhausted, so the response goes out without Replay-Nonce and
+    # the client will request one explicitly via HEAD /new-nonce.
     try:
-        nonce = container.nonce_service.create()
-        response.headers["Replay-Nonce"] = nonce
+        nonce = container.nonce_service.create_if_healthy()
+        if nonce is not None:
+            response.headers["Replay-Nonce"] = nonce
     except Exception:
         log.exception("Failed to generate replay nonce")
+        from acmeeh.db.init import log_pool_stats  # noqa: PLC0415
+
+        log_pool_stats(container.db, "replay_nonce")
 
     # Directory link
     response.headers["Link"] = f'<{container.urls.directory}>;rel="index"'
