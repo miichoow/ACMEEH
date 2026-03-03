@@ -36,7 +36,7 @@ database:
   sslmode: ${POSTGRES_SSLMODE:-disable}
   min_connections: 2
   max_connections: 10
-  connection_timeout: 30.0
+  connection_timeout: 10.0
   auto_setup: true
 
 # ── CA ────────────────────────────────────────────────────────────────
@@ -46,11 +46,11 @@ ca:
   max_validity_days: 397
   circuit_breaker_failure_threshold: 5
   circuit_breaker_recovery_timeout: 30.0
+  deferred_signing_timeout: 600
 
   internal:
     root_cert_path: ${CA_ROOT_CERT_PATH:-/app/certs/root.pem}
     root_key_path: ${CA_ROOT_KEY_PATH:-/app/certs/root-key.pem}
-    key_provider: ${CA_KEY_PROVIDER:-file}
     serial_source: ${CA_SERIAL_SOURCE:-database}
     hash_algorithm: ${CA_HASH_ALGORITHM:-sha256}
 
@@ -69,6 +69,10 @@ ca:
     storage_path: ${CA_PROXY_STORAGE_PATH:-/app/data/acme_proxy_storage}
     challenge_type: ${CA_PROXY_CHALLENGE_TYPE:-dns-01}
     challenge_handler: ${CA_PROXY_CHALLENGE_HANDLER:-}
+    challenge_handler_config: {}
+    eab_kid: ${CA_PROXY_EAB_KID:-}
+    eab_hmac_key: ${CA_PROXY_EAB_HMAC_KEY:-}
+    proxy_url: ${CA_PROXY_PROXY_URL:-}
     verify_ssl: true
     timeout_seconds: 300
 
@@ -89,7 +93,7 @@ ca:
 challenges:
   enabled:
     - http-01
-  auto_validate: true
+  auto_accept: false
   retry_after_seconds: 3
   backoff_base_seconds: 5
   backoff_max_seconds: 300
@@ -200,6 +204,8 @@ smtp:
   password: ${SMTP_PASSWORD:-}
   use_tls: true
   from_address: ${SMTP_FROM:-}
+  cc: []
+  bcc: []
   timeout_seconds: 30
 
 # ── Notifications ─────────────────────────────────────────────────────
@@ -245,13 +251,6 @@ crl:
   next_update_seconds: 86400
   hash_algorithm: sha256
 
-# ── OCSP ──────────────────────────────────────────────────────────────
-ocsp:
-  enabled: false
-  path: ${OCSP_PATH:-/ocsp}
-  response_validity_seconds: 86400
-  hash_algorithm: sha256
-
 # ── ARI (ACME Renewal Information) ───────────────────────────────────
 ari:
   enabled: false
@@ -286,4 +285,6 @@ retention:
   invalid_order_max_age_days: 30
   expired_authz_max_age_days: 30
   invalid_challenge_max_age_days: 30
+  expiration_notice_max_age_days: 90
   cleanup_interval_seconds: 86400
+  cleanup_loop_interval_seconds: 60

@@ -110,7 +110,6 @@ ca:
   internal:
     root_cert_path: /etc/acmeeh/ca/root.pem
     root_key_path: /etc/acmeeh/ca/root-key.pem
-    key_provider: file
     chain_path: /etc/acmeeh/ca/chain.pem
     serial_source: database
 dns:
@@ -132,6 +131,8 @@ smtp:
   password: ${SMTP_PASSWORD:-}
   use_tls: true
   from_address: acmeeh@corp.internal
+  cc: []
+  bcc: []
   templates_path: null
 notifications:
   enabled: true
@@ -139,6 +140,10 @@ notifications:
   retry_delay_seconds: 60
   batch_size: 50
   retry_interval_seconds: 300
+  disabled_types: []
+  # disabled_types:
+  #   - challenge_failed
+  #   - order_quota_exceeded
 logging:
   level: INFO
   format: json

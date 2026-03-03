@@ -2,6 +2,7 @@
 FROM python:3.12-slim-bookworm AS builder
 
 ARG INSTALL_HSM=0
+ARG INSTALL_ACME_PROXY=0
 ARG INSTALL_GEVENT=0
 ARG EXTRA_PIP_PACKAGES=""
 
@@ -20,6 +21,9 @@ RUN pip install --no-cache-dir -r /tmp/requirements.txt
 # Install optional extras
 RUN if [ "$INSTALL_HSM" = "1" ]; then \
         pip install --no-cache-dir python-pkcs11>=0.7; \
+    fi && \
+    if [ "$INSTALL_ACME_PROXY" = "1" ]; then \
+        pip install --no-cache-dir "acmeow>=1.1"; \
     fi && \
     if [ "$INSTALL_GEVENT" = "1" ]; then \
         pip install --no-cache-dir gevent>=24.0; \

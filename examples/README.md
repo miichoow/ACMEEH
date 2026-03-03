@@ -32,8 +32,7 @@ PYTHONPATH=src DB_PASSWORD=secret .venv/Scripts/python.exe -m acmeeh -c examples
 | [`external-ca.yaml`](external-ca.yaml) | External CA via HTTP API (e.g., Vault PKI) with mTLS client auth. |
 | [`acme-proxy-eab.yaml`](acme-proxy-eab.yaml) | ACME proxy: forward to upstream CA via ACMEOW, EAB both sides, admin API, allowlists. |
 | [`custom-ca-plugin.yaml`](custom-ca-plugin.yaml) | Custom CA plugin loaded via `ext:package.module.Class`. |
-| [`pkcs11-hsm.yaml`](pkcs11-hsm.yaml) | Internal CA with PKCS#11 HSM for key storage. |
-| [`hsm-backend.yaml`](hsm-backend.yaml) | Dedicated HSM CA backend via PKCS#11 with session pool. |
+| [`hsm-backend.yaml`](hsm-backend.yaml) | HSM CA backend via PKCS#11 with session pool. |
 | [`certificate-profiles.yaml`](certificate-profiles.yaml) | Multiple cert profiles: web, client-auth, dual-purpose, code-signing, short-lived. |
 
 ### Challenges
@@ -65,11 +64,11 @@ PYTHONPATH=src DB_PASSWORD=secret .venv/Scripts/python.exe -m acmeeh -c examples
 
 | File | Description |
 |------|-------------|
-| [`hooks-all-events.yaml`](hooks-all-events.yaml) | Lifecycle hooks: all 9 event types with real-world hook examples. |
+| [`hooks-all-events.yaml`](hooks-all-events.yaml) | Lifecycle hooks: all 10 event types with real-world hook examples. |
 | [`email-notifications.yaml`](email-notifications.yaml) | Full SMTP + email validation + notification retry configuration. |
 | [`custom-acme-paths.yaml`](custom-acme-paths.yaml) | Remapped ACME endpoint paths with API base path prefix. |
 | [`environment-variables.yaml`](environment-variables.yaml) | All `${VAR}` / `${VAR:-default}` substitution patterns. |
-| [`ocsp-crl-ari.yaml`](ocsp-crl-ari.yaml) | OCSP responder, CRL publishing, and ACME Renewal Information. |
+| [`crl-ari.yaml`](crl-ari.yaml) | CRL publishing and ACME Renewal Information. |
 | [`ct-logging.yaml`](ct-logging.yaml) | Certificate Transparency log submission with SCT embedding. |
 
 ## Configuration Sections Reference
@@ -97,8 +96,11 @@ Every section is optional except `server` (with `external_url`) and `database` (
 | `tos` | Terms of Service enforcement | `url`, `require_agreement` |
 | `admin_api` | Admin REST API for EAB, allowlists, CSR profiles | `enabled`, `base_path`, `token_secret`, `initial_admin_email` |
 | `crl` | Certificate Revocation List publishing | `enabled`, `path`, `rebuild_interval_seconds` |
-| `ocsp` | OCSP responder | `enabled`, `path`, `response_validity_seconds` |
 | `ari` | ACME Renewal Information (RFC draft) | `enabled`, `path`, `renewal_percentage` |
 | `ct_logging` | Certificate Transparency log submission | `enabled`, `logs[]`, `submit_precert` |
 | `metrics` | Prometheus metrics endpoint | `enabled`, `path` |
+| `account` | Account management settings | `allow_contact_update`, `allow_deactivation` |
+| `quotas` | Per-account certificate/order quotas | `enabled`, `max_certificates_per_account_per_day` |
+| `audit_retention` | Audit log retention policy | `enabled`, `max_age_days`, `cleanup_interval_seconds` |
+| `audit_export` | External audit event export | `webhook_url`, `syslog_host`, `syslog_port` |
 | `retention` | Cleanup of expired orders/authz/challenges | `enabled`, interval and max-age settings |

@@ -1,13 +1,9 @@
 _comment:
 - HSM CA backend via PKCS#11.
 - ''
-- Unlike pkcs11-hsm.json (which uses the 'internal' CA backend
-- with key_provider=pkcs11), this example uses the dedicated 'hsm'
-- CA backend that performs all signing operations directly through
-- the PKCS#11 interface.
-- ''
-- The HSM backend uses a session pool for concurrent signing and
-- supports RSA and ECDSA keys stored on the HSM.
+- The HSM backend performs all signing operations directly through
+- the PKCS#11 interface. It uses a session pool for concurrent
+- signing and supports RSA and ECDSA keys stored on the HSM.
 - ''
 - 'Requires: pip install python-pkcs11'
 server:

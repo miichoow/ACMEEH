@@ -5,6 +5,7 @@ services:
       dockerfile: Dockerfile
       args:
         INSTALL_HSM: ${INSTALL_HSM:-0}
+        INSTALL_ACME_PROXY: ${INSTALL_ACME_PROXY:-0}
         INSTALL_GEVENT: ${INSTALL_GEVENT:-0}
         EXTRA_PIP_PACKAGES: ${EXTRA_PIP_PACKAGES:-}
         ACMEEH_UID: ${ACMEEH_UID:-1000}
@@ -20,23 +21,62 @@ services:
       ACMEEH_EXTERNAL_URL: ${ACMEEH_EXTERNAL_URL:-https://acmeeh:8443}
       ACMEEH_BIND: ${ACMEEH_BIND:-0.0.0.0}
       ACMEEH_BASE_PATH: ${ACMEEH_BASE_PATH:-}
-      # CA
+      # Reverse proxy
+      ACMEEH_FORWARDED_FOR_HEADER: ${ACMEEH_FORWARDED_FOR_HEADER:-X-Forwarded-For}
+      ACMEEH_FORWARDED_PROTO_HEADER: ${ACMEEH_FORWARDED_PROTO_HEADER:-X-Forwarded-Proto}
+      # CA — internal
       CA_BACKEND: ${CA_BACKEND:-internal}
       CA_ROOT_CERT_PATH: ${CA_ROOT_CERT_PATH:-/app/certs/root.pem}
       CA_ROOT_KEY_PATH: ${CA_ROOT_KEY_PATH:-/app/certs/root-key.pem}
-      CA_KEY_PROVIDER: ${CA_KEY_PROVIDER:-file}
       CA_SERIAL_SOURCE: ${CA_SERIAL_SOURCE:-database}
       CA_HASH_ALGORITHM: ${CA_HASH_ALGORITHM:-sha256}
+      # CA — external
+      CA_EXT_SIGN_URL: ${CA_EXT_SIGN_URL:-}
+      CA_EXT_REVOKE_URL: ${CA_EXT_REVOKE_URL:-}
+      CA_EXT_AUTH_HEADER: ${CA_EXT_AUTH_HEADER:-Authorization}
+      CA_EXT_AUTH_VALUE: ${CA_EXT_AUTH_VALUE:-}
+      # CA — ACME proxy
+      CA_PROXY_DIRECTORY_URL: ${CA_PROXY_DIRECTORY_URL:-}
+      CA_PROXY_EMAIL: ${CA_PROXY_EMAIL:-}
+      CA_PROXY_STORAGE_PATH: ${CA_PROXY_STORAGE_PATH:-/app/data/acme_proxy_storage}
+      CA_PROXY_CHALLENGE_TYPE: ${CA_PROXY_CHALLENGE_TYPE:-dns-01}
+      CA_PROXY_CHALLENGE_HANDLER: ${CA_PROXY_CHALLENGE_HANDLER:-}
+      CA_PROXY_EAB_KID: ${CA_PROXY_EAB_KID:-}
+      CA_PROXY_EAB_HMAC_KEY: ${CA_PROXY_EAB_HMAC_KEY:-}
+      CA_PROXY_PROXY_URL: ${CA_PROXY_PROXY_URL:-}
+      # CA — HSM / PKCS#11
+      HSM_PKCS11_LIBRARY: ${HSM_PKCS11_LIBRARY:-/usr/lib/softhsm/libsofthsm2.so}
+      HSM_TOKEN_LABEL: ${HSM_TOKEN_LABEL:-acmeeh}
+      HSM_PIN: ${HSM_PIN:-}
+      HSM_KEY_LABEL: ${HSM_KEY_LABEL:-acmeeh-signing}
+      HSM_KEY_TYPE: ${HSM_KEY_TYPE:-ec}
+      HSM_HASH_ALGORITHM: ${HSM_HASH_ALGORITHM:-sha256}
+      HSM_ISSUER_CERT_PATH: ${HSM_ISSUER_CERT_PATH:-/app/certs/issuer.pem}
+      HSM_SERIAL_SOURCE: ${HSM_SERIAL_SOURCE:-database}
       # Logging
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-human}
       AUDIT_LOG_FILE: ${AUDIT_LOG_FILE:-/var/log/acmeeh/audit.log}
-      # Admin
-      ADMIN_TOKEN_SECRET: ${ADMIN_TOKEN_SECRET:-}
-      ADMIN_INITIAL_EMAIL: ${ADMIN_INITIAL_EMAIL:-}
       # SMTP
       SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      # TOS
+      TOS_URL: ${TOS_URL:-}
+      # Admin API
+      ADMIN_BASE_PATH: ${ADMIN_BASE_PATH:-/api}
+      ADMIN_TOKEN_SECRET: ${ADMIN_TOKEN_SECRET:-}
+      ADMIN_INITIAL_EMAIL: ${ADMIN_INITIAL_EMAIL:-}
+      # Rate limiting
+      RATE_LIMIT_BACKEND: ${RATE_LIMIT_BACKEND:-memory}
+      # Optional subsystems
+      CRL_PATH: ${CRL_PATH:-/crl}
+      ARI_PATH: ${ARI_PATH:-/renewalInfo}
+      METRICS_PATH: ${METRICS_PATH:-/metrics}
+      # Audit export
+      AUDIT_WEBHOOK_URL: ${AUDIT_WEBHOOK_URL:-}
+      AUDIT_SYSLOG_HOST: ${AUDIT_SYSLOG_HOST:-}
     ports:
       - "${ACMEEH_PORT:-8443}:8443"
     volumes:

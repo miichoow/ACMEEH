@@ -6,6 +6,7 @@ _comment:
 - '- Strict domain allow-list with explicit forbidden domains'
 - '- No wildcards allowed'
 - '- No IP-based identifiers'
+- '- CSR profile required for all accounts'
 - '- EAB required (pre-authorized accounts only)'
 - '- TOS must be agreed to'
 - '- Contact email mandatory with MX validation'
@@ -35,6 +36,7 @@ security:
     challenge:
       requests: 10
       window_seconds: 60
+  require_csr_profile: true
   identifier_policy:
     allowed_domains:
     - '*.secure.internal'
@@ -50,6 +52,12 @@ acme:
   eab_reusable: false
   caa_identities:
   - acme.secure.internal
+admin_api:
+  enabled: true
+  base_path: /api
+  token_secret: ${ADMIN_TOKEN_SECRET}
+  token_expiry_seconds: 3600
+  initial_admin_email: admin@secure.internal
 database:
   host: db.secure.internal
   database: acmeeh
@@ -58,15 +66,21 @@ database:
   sslmode: verify-full
   max_connections: 15
 ca:
-  backend: internal
+  backend: hsm
   default_validity_days: 30
   max_validity_days: 90
-  internal:
-    root_cert_path: /etc/acmeeh/ca/root.pem
-    root_key_path: /etc/acmeeh/ca/root-key.pem
-    key_provider: pkcs11
+  hsm:
+    pkcs11_library: /usr/lib/softhsm/libsofthsm2.so
+    token_label: ACMEEH-CA
+    pin: ${HSM_PIN}
+    key_label: ca-signing-key
+    key_type: ec
+    hash_algorithm: sha384
+    issuer_cert_path: /etc/acmeeh/ca/issuer.pem
     chain_path: /etc/acmeeh/ca/chain.pem
     serial_source: database
+    login_required: true
+    session_pool_size: 4
 email:
   require_contact: true
   allowed_domains:

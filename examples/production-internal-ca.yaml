@@ -56,6 +56,12 @@ acme:
   - acme.corp.internal
   eab_required: true
   eab_reusable: false
+admin_api:
+  enabled: true
+  base_path: /api
+  token_secret: ${ADMIN_TOKEN_SECRET}
+  token_expiry_seconds: 3600
+  initial_admin_email: admin@corp.internal
 challenges:
   enabled:
   - http-01
@@ -99,7 +105,6 @@ ca:
   internal:
     root_cert_path: /etc/acmeeh/ca/root.pem
     root_key_path: /etc/acmeeh/ca/root-key.pem
-    key_provider: file
     chain_path: /etc/acmeeh/ca/chain.pem
     serial_source: database
 dns:

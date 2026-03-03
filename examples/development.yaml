@@ -30,7 +30,6 @@ ca:
   internal:
     root_cert_path: dev/ca/root.pem
     root_key_path: dev/ca/root-key.pem
-    key_provider: file
     serial_source: random
 challenges:
   enabled:

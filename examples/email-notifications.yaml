@@ -33,6 +33,10 @@ smtp:
   password: ${SMTP_PASSWORD}
   use_tls: true
   from_address: pki-noreply@corp.internal
+  cc:
+    - pki-ops@corp.internal
+  bcc:
+    - audit-mailbox@corp.internal
   templates_path: /etc/acmeeh/templates
 notifications:
   enabled: true

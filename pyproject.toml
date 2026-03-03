@@ -108,7 +108,7 @@ ignore = [
     "S106",     # hardcoded-password-func-arg — false positives in tests
     "S108",     # hardcoded-temp-file — /tmp usage is intentional
     "S310",     # suspicious-url-open — urllib usage is intentional
-    "S324",     # hashlib-insecure — MD5/SHA1 used for OCSP/fingerprints, not security
+    "S324",     # hashlib-insecure — MD5/SHA1 used for fingerprints, not security
     "S608",     # hardcoded-sql — SQL is parameterized, ruff can't see that
     "PLR0913",  # too-many-arguments — unavoidable in DI/settings
     "PLR0912",  # too-many-branches — complex but readable
