@@ -752,6 +752,33 @@ class TestGetConfigNotInitialised:
             get_config()
 
 
+class TestEabRequiredWithoutAdminApi:
+    """eab_required=true without admin_api.enabled should error."""
+
+    def test_eab_required_without_admin_api_raises(self, tmp_path):
+        with pytest.raises(ConfigValidationError, match="eab_required.*admin_api"):
+            _make_config(
+                tmp_path,
+                {
+                    "acme": {"eab_required": True},
+                },
+            )
+
+    def test_eab_required_with_admin_api_passes(self, tmp_path):
+        """No error when both eab_required and admin_api are enabled."""
+        _make_config(
+            tmp_path,
+            {
+                "acme": {"eab_required": True},
+                "admin_api": {
+                    "enabled": True,
+                    "initial_admin_email": "admin@example.com",
+                    "token_secret": "super-secret-token-123",
+                },
+            },
+        )
+
+
 class TestEabReusableWarning:
     """Line 328: eab_reusable without eab_required should warn."""
 

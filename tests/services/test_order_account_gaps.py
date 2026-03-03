@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
@@ -209,23 +209,22 @@ class TestNormalizeIdn:
 # ===================================================================
 
 
-@patch("acmeeh.services.order.UnitOfWork")
 class TestCreateOrder:
     """Cover create_order gap lines."""
 
-    def test_invalid_identifier_raises_and_logs(self, mock_uow):
+    def test_invalid_identifier_raises_and_logs(self):
         """Lines 191-198: AcmeProblem from _parse_identifiers logged and re-raised."""
         svc = _build_order_service()
         with pytest.raises(AcmeProblem):
             svc.create_order("acct-1", [{"type": "dns", "value": ""}])
 
-    def test_invalid_identifier_type_raises(self, mock_uow):
+    def test_invalid_identifier_type_raises(self):
         """Unsupported identifier type raises AcmeProblem."""
         svc = _build_order_service()
         with pytest.raises(AcmeProblem):
             svc.create_order("acct-1", [{"type": "bogus", "value": "example.com"}])
 
-    def test_per_identifier_rate_limiting(self, mock_uow):
+    def test_per_identifier_rate_limiting(self):
         """Lines 202-203: rate_limiter.check called per identifier."""
         rate_limiter = MagicMock()
         rate_limiter.check.return_value = None
@@ -244,7 +243,7 @@ class TestCreateOrder:
         svc.create_order(uuid4(), [{"type": "dns", "value": "example.com"}])
         rate_limiter.check.assert_called()
 
-    def test_per_identifier_rate_limiting_blocked(self, mock_uow):
+    def test_per_identifier_rate_limiting_blocked(self):
         """Lines 202-203: rate_limiter.check raises when rate limited."""
         rate_limiter = MagicMock()
         rate_limiter.check.side_effect = AcmeProblem("rateLimited", "Too many requests", 429)
@@ -253,7 +252,7 @@ class TestCreateOrder:
         with pytest.raises(AcmeProblem):
             svc.create_order(uuid4(), [{"type": "dns", "value": "example.com"}])
 
-    def test_hook_dispatch_on_order_creation(self, mock_uow):
+    def test_hook_dispatch_on_order_creation(self):
         """Line 265: hook_registry dispatches order.creation event."""
         hook_registry = MagicMock()
 
@@ -271,7 +270,7 @@ class TestCreateOrder:
         svc.create_order(uuid4(), [{"type": "dns", "value": "example.com"}])
         hook_registry.dispatch.assert_called()
 
-    def test_quota_max_per_day_zero_returns_early(self, mock_uow):
+    def test_quota_max_per_day_zero_returns_early(self):
         """Line 283: max_per_day <= 0 returns early (no enforcement)."""
         quota_settings = _make_quota_settings(max_orders_per_account_per_day=0)
 
@@ -291,7 +290,7 @@ class TestCreateOrder:
         # count_orders_since should NOT have been called
         order_repo.count_orders_since.assert_not_called()
 
-    def test_quota_max_per_day_negative_returns_early(self, mock_uow):
+    def test_quota_max_per_day_negative_returns_early(self):
         """Line 283: negative max_per_day also returns early."""
         quota_settings = _make_quota_settings(max_orders_per_account_per_day=-1)
 
@@ -309,7 +308,7 @@ class TestCreateOrder:
         svc.create_order(uuid4(), [{"type": "dns", "value": "example.com"}])
         order_repo.count_orders_since.assert_not_called()
 
-    def test_reusable_authorization_found(self, mock_uow):
+    def test_reusable_authorization_found(self):
         """Lines 354-358: reusable authz linked instead of creating new."""
         order_repo = MagicMock()
         authz_repo = MagicMock()
@@ -339,7 +338,7 @@ class TestCreateOrder:
         authz_repo.create.assert_not_called()
         order_repo.link_authorization.assert_called_once()
 
-    def test_create_order_with_idn_wildcard(self, mock_uow):
+    def test_create_order_with_idn_wildcard(self):
         """Integration: create_order with IDN wildcard (lines 89-90)."""
         order_repo = MagicMock()
         authz_repo = MagicMock()
@@ -354,7 +353,7 @@ class TestCreateOrder:
         svc.create_order(uuid4(), [{"type": "dns", "value": "*.münchen.de"}])
         order_repo.create.assert_called_once()
 
-    def test_multiple_identifiers_with_rate_limiter(self, mock_uow):
+    def test_multiple_identifiers_with_rate_limiter(self):
         """Rate limiter checked for each identifier."""
         rate_limiter = MagicMock()
         rate_limiter.check.return_value = None
@@ -379,7 +378,7 @@ class TestCreateOrder:
         )
         assert rate_limiter.check.call_count >= 2
 
-    def test_hook_and_quota_combined(self, mock_uow):
+    def test_hook_and_quota_combined(self):
         """Hook dispatch and quota check together."""
         hook_registry = MagicMock()
         quota_settings = _make_quota_settings(max_orders_per_account_per_day=0)
@@ -399,7 +398,7 @@ class TestCreateOrder:
         svc.create_order(uuid4(), [{"type": "dns", "value": "example.com"}])
         hook_registry.dispatch.assert_called()
 
-    def test_wildcard_disallowed_by_policy(self, mock_uow):
+    def test_wildcard_disallowed_by_policy(self):
         """Wildcard not allowed by policy raises."""
         policy = _make_identifier_policy(allow_wildcards=False)
         svc = _build_order_service(identifier_policy=policy)
@@ -460,11 +459,10 @@ class TestListOrders:
 # ===================================================================
 
 
-@patch("acmeeh.services.order.UnitOfWork")
 class TestAllowlistEnforcement:
     """Cover allowlist enforcement paths."""
 
-    def test_allowlist_all_identifiers_allowed(self, mock_uow):
+    def test_allowlist_all_identifiers_allowed(self):
         """Line 753: allowlist check passes when all identifiers are allowed."""
         order_repo = MagicMock()
         authz_repo = MagicMock()
@@ -489,7 +487,7 @@ class TestAllowlistEnforcement:
         # Should succeed -- identifier on the allowlist
         svc.create_order(uuid4(), [{"type": "dns", "value": "example.com"}])
 
-    def test_allowlist_no_entries_rejects_all(self, mock_uow):
+    def test_allowlist_no_entries_rejects_all(self):
         """Line 730-752: empty allowlist rejects all identifiers."""
         allowlist_repo = MagicMock()
         allowlist_repo.find_allowed_values_for_account.return_value = []
@@ -506,7 +504,7 @@ class TestAllowlistEnforcement:
                 [{"type": "dns", "value": "forbidden.com"}],
             )
 
-    def test_allowlist_empty_no_identifiers_returns(self, mock_uow):
+    def test_allowlist_empty_no_identifiers_returns(self):
         """Line 753: empty allowlist + no identifiers returns (no raise)."""
         allowlist_repo = MagicMock()
         allowlist_repo.find_allowed_values_for_account.return_value = []
@@ -522,7 +520,7 @@ class TestAllowlistEnforcement:
         with pytest.raises(AcmeProblem):
             svc.create_order(uuid4(), [])
 
-    def test_allowlist_repo_none_raises(self, mock_uow):
+    def test_allowlist_repo_none_raises(self):
         """Line 716-723: enforce enabled but repo is None raises."""
         policy = _make_identifier_policy(enforce_account_allowlist=True)
 
@@ -536,7 +534,7 @@ class TestAllowlistEnforcement:
                 [{"type": "dns", "value": "example.com"}],
             )
 
-    def test_allowlist_identifier_not_matched(self, mock_uow):
+    def test_allowlist_identifier_not_matched(self):
         """Allowed list present but identifier not matched -> rejected."""
         allowlist_repo = MagicMock()
         allowlist_repo.find_allowed_values_for_account.return_value = [

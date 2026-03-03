@@ -24,9 +24,10 @@ class TestFactorySourceCode:
         src = self._get_source()
         assert "atexit.register" in src
 
-    def test_no_teardown_appcontext(self):
+    def test_has_teardown_appcontext_for_pool_health(self):
         src = self._get_source()
-        assert "teardown_appcontext" not in src
+        assert "teardown_appcontext" in src
+        assert "_monitor_pool_health" in src
 
 
 class TestFactoryAtexitRegistration:
@@ -45,11 +46,13 @@ class TestFactoryAtexitRegistration:
             patch("acmeeh.app.context.Container", return_value=mock_container),
             patch("acmeeh.api.register_blueprints"),
         ):
-            from acmeeh.app.factory import create_app
+            from acmeeh.app.factory import create_app, start_workers
 
-            create_app(database=mock_db)
+            app = create_app(database=mock_db)
+            start_workers(app)
 
-        # atexit registers: shutdown_coordinator, hook_registry, cleanup_worker, expiration_worker
+        # atexit registers: shutdown_coordinator, hook_registry (from create_app)
+        # + cleanup_worker, expiration_worker (from start_workers)
         registered_callables = [call.args[0] for call in mock_atexit.call_args_list]
         assert mock_registry.shutdown in registered_callables
         assert mock_container.cleanup_worker.stop in registered_callables

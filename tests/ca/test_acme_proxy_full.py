@@ -78,7 +78,6 @@ def _make_ca_settings(proxy: AcmeProxySettings | None = None) -> CASettings:
         internal=CAInternalSettings(
             root_cert_path="",
             root_key_path="",
-            key_provider="file",
             chain_path=None,
             serial_source="database",
             hash_algorithm="sha256",
@@ -114,6 +113,7 @@ def _make_ca_settings(proxy: AcmeProxySettings | None = None) -> CASettings:
         ),
         circuit_breaker_failure_threshold=5,
         circuit_breaker_recovery_timeout=30.0,
+        deferred_signing_timeout=600,
     )
 
 
@@ -283,11 +283,12 @@ class TestStartupCheckFull:
         mock_handler.return_value = MagicMock()
         mock_acmeow = MagicMock()
         mock_acmeow.AcmeClient.side_effect = ConnectionError("refused")
+        mock_acmeow_enums = MagicMock()
 
         settings = _make_ca_settings()
         backend = AcmeProxyBackend(settings)
 
-        with patch.dict("sys.modules", {"acmeow": mock_acmeow}):
+        with patch.dict("sys.modules", {"acmeow": mock_acmeow, "acmeow.enums": mock_acmeow_enums}):
             with pytest.raises(CAError, match="Failed to initialise ACMEOW client") as exc_info:
                 backend.startup_check()
             assert exc_info.value.retryable is True
@@ -300,11 +301,12 @@ class TestStartupCheckFull:
         mock_client = MagicMock()
         mock_acmeow = MagicMock()
         mock_acmeow.AcmeClient.return_value = mock_client
+        mock_acmeow_enums = MagicMock()
 
         settings = _make_ca_settings()
         backend = AcmeProxyBackend(settings)
 
-        with patch.dict("sys.modules", {"acmeow": mock_acmeow}):
+        with patch.dict("sys.modules", {"acmeow": mock_acmeow, "acmeow.enums": mock_acmeow_enums}):
             backend.startup_check()
 
         assert backend._client is mock_client
@@ -589,15 +591,20 @@ class TestRevokeFull:
         mock_client.revoke_certificate.assert_called_once()
 
     def test_revoke_with_reason(self, ca_settings):
-        """Revoke passes reason code to upstream."""
+        """Revoke converts reason to acmeow RevocationReason enum."""
         mock_client = MagicMock()
+        mock_acmeow_reason_cls = MagicMock()
+        mock_acmeow_reason_instance = MagicMock()
+        mock_acmeow_reason_cls.return_value = mock_acmeow_reason_instance
+
         backend = AcmeProxyBackend(ca_settings)
         backend._client = mock_client
+        backend._acmeow_revocation_reason = mock_acmeow_reason_cls
 
         cert_pem = _make_self_signed_cert_pem()
 
         mock_reason = MagicMock()
-        mock_reason.value = 4  # supersceded
+        mock_reason.value = 4  # superseded
 
         backend.revoke(
             serial_number="abc123",
@@ -605,8 +612,9 @@ class TestRevokeFull:
             reason=mock_reason,
         )
 
+        mock_acmeow_reason_cls.assert_called_once_with(4)
         call_kwargs = mock_client.revoke_certificate.call_args
-        assert call_kwargs[1]["reason"] == 4
+        assert call_kwargs[1]["reason"] is mock_acmeow_reason_instance
 
     def test_upstream_exception_logged_not_raised(self, ca_settings):
         """Upstream errors are caught and logged, not raised."""

@@ -58,11 +58,17 @@ def _make_challenge(
     )
 
 
-def _make_service(authz_repo=None, challenge_repo=None, pre_auth_days=30):
+def _make_service(
+    authz_repo=None,
+    challenge_repo=None,
+    pre_auth_days=30,
+    enabled_challenge_types=("http-01", "dns-01"),
+):
     return AuthorizationService(
         authz_repo=authz_repo or MagicMock(),
         challenge_repo=challenge_repo or MagicMock(),
         pre_authorization_lifetime_days=pre_auth_days,
+        enabled_challenge_types=enabled_challenge_types,
     )
 
 
@@ -312,7 +318,7 @@ class TestCreatePreAuthorization:
         assert challenges[0].type == ChallengeType.DNS_01
         challenge_repo.create.assert_called_once()
 
-    def test_ip_identifier_skips_dns01(self):
+    def test_ip_identifier_skips_http01_and_dns01(self):
         authz_repo = MagicMock()
         challenge_repo = MagicMock()
         account_id = uuid4()
@@ -324,9 +330,29 @@ class TestCreatePreAuthorization:
 
         assert authz.identifier_type == IdentifierType.IP
         assert authz.identifier_value == "192.168.1.1"
-        # Only HTTP-01 for IP
+        # Neither HTTP-01 nor DNS-01 is applicable for IP identifiers;
+        # TLS-ALPN-01 must be enabled for IP-based challenges.
+        assert len(challenges) == 0
+        challenge_repo.create.assert_not_called()
+
+    def test_ip_identifier_gets_tls_alpn01(self):
+        authz_repo = MagicMock()
+        challenge_repo = MagicMock()
+        account_id = uuid4()
+
+        authz_repo.find_reusable.return_value = None
+
+        svc = _make_service(
+            authz_repo=authz_repo,
+            challenge_repo=challenge_repo,
+            enabled_challenge_types=("http-01", "dns-01", "tls-alpn-01"),
+        )
+        authz, challenges = svc.create_pre_authorization(account_id, "ip", "192.168.1.1")
+
+        assert authz.identifier_type == IdentifierType.IP
+        # Only TLS-ALPN-01 for IP
         assert len(challenges) == 1
-        assert challenges[0].type == ChallengeType.HTTP_01
+        assert challenges[0].type == ChallengeType.TLS_ALPN_01
         challenge_repo.create.assert_called_once()
 
     def test_pre_authorization_lifetime(self):
@@ -343,3 +369,82 @@ class TestCreatePreAuthorization:
         expected_min = datetime.now(UTC) + timedelta(days=14, hours=23)
         expected_max = datetime.now(UTC) + timedelta(days=15, minutes=1)
         assert expected_min <= authz.expires <= expected_max
+
+    def test_only_creates_enabled_challenge_types(self):
+        authz_repo = MagicMock()
+        challenge_repo = MagicMock()
+        account_id = uuid4()
+
+        authz_repo.find_reusable.return_value = None
+
+        # Only http-01 enabled
+        svc = _make_service(
+            authz_repo=authz_repo,
+            challenge_repo=challenge_repo,
+            enabled_challenge_types=("http-01",),
+        )
+        authz, challenges = svc.create_pre_authorization(account_id, "dns", "example.com")
+
+        assert len(challenges) == 1
+        assert challenges[0].type == ChallengeType.HTTP_01
+        challenge_repo.create.assert_called_once()
+
+    def test_reuse_filters_stale_challenge_types(self):
+        authz_repo = MagicMock()
+        challenge_repo = MagicMock()
+        account_id = uuid4()
+
+        existing_authz = _make_authz(account_id=account_id, status=AuthorizationStatus.VALID)
+        # Existing authorization has both http-01 and dns-01 from a previous config
+        existing_challenges = [
+            _make_challenge(
+                authorization_id=existing_authz.id, challenge_type=ChallengeType.HTTP_01
+            ),
+            _make_challenge(
+                authorization_id=existing_authz.id, challenge_type=ChallengeType.DNS_01
+            ),
+        ]
+
+        authz_repo.find_reusable.return_value = existing_authz
+        challenge_repo.find_by_authorization.return_value = existing_challenges
+
+        # Only http-01 enabled now
+        svc = _make_service(
+            authz_repo=authz_repo,
+            challenge_repo=challenge_repo,
+            enabled_challenge_types=("http-01",),
+        )
+        authz, challenges = svc.create_pre_authorization(account_id, "dns", "example.com")
+
+        assert authz == existing_authz
+        assert len(challenges) == 1
+        assert challenges[0].type == ChallengeType.HTTP_01
+
+
+class TestGetAuthorizationFiltering:
+    def test_filters_stale_challenge_types(self):
+        authz_repo = MagicMock()
+        challenge_repo = MagicMock()
+
+        account_id = uuid4()
+        authz = _make_authz(account_id=account_id)
+        # DB has both types from a previous config
+        challenges = [
+            _make_challenge(authorization_id=authz.id, challenge_type=ChallengeType.HTTP_01),
+            _make_challenge(authorization_id=authz.id, challenge_type=ChallengeType.DNS_01),
+        ]
+
+        authz_repo.find_by_id.return_value = authz
+        challenge_repo.find_by_authorization.return_value = challenges
+
+        # Only http-01 enabled now
+        svc = _make_service(
+            authz_repo=authz_repo,
+            challenge_repo=challenge_repo,
+            enabled_challenge_types=("http-01",),
+        )
+        result_authz, result_challenges = svc.get_authorization(authz.id, account_id)
+
+        assert result_authz == authz
+        assert len(result_challenges) == 1
+        assert result_challenges[0].type == ChallengeType.HTTP_01

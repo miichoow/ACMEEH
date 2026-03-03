@@ -406,6 +406,11 @@ class MockNonceRepo(InMemoryRepo):
     def create(self, entity):
         self._data[entity.nonce] = entity
 
+    def bulk_create(self, nonces):
+        for entity in nonces:
+            self._data[entity.nonce] = entity
+        return len(nonces)
+
     def find_by_id(self, nonce_value):
         return self._data.get(nonce_value)
 
@@ -837,6 +842,7 @@ def app(_min_config_data):
         container.authorizations,
         container.challenges,
         order_repo=container.orders,
+        enabled_challenge_types=settings.challenges.enabled,
     )
     container.challenge_service = ChallengeService(
         container.challenges,

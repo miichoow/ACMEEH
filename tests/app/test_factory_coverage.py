@@ -6,7 +6,6 @@ Covers:
 - Rate limiter registration when enabled
 - Proxy middleware registration when enabled
 - Metrics endpoint registration when enabled
-- OCSP responder registration when enabled
 - Admin API registration and bootstrap password output
 - Config hot-reload before_request handler (all branches)
 """
@@ -44,7 +43,7 @@ def _make_mock_settings(**overrides):
     s.server.graceful_timeout = 5
     s.server.external_url = "http://localhost"
     s.metrics.enabled = False
-    s.ocsp.enabled = False
+
     s.admin_api.enabled = False
 
     # Apply caller overrides
@@ -208,7 +207,12 @@ class TestProxyMiddlewareBranch:
             app = create_app(config=config, database=None)
 
         mw_cls.assert_called_once()
-        assert app.wsgi_app is sentinel_middleware
+        # ServerHeaderMiddleware wraps the outermost layer; proxy middleware
+        # is underneath it.
+        from acmeeh.app.middleware import ServerHeaderMiddleware
+
+        assert isinstance(app.wsgi_app, ServerHeaderMiddleware)
+        assert app.wsgi_app.app is sentinel_middleware
 
 
 # ===================================================================
@@ -265,65 +269,6 @@ class TestMetricsBranch:
 
 
 # ===================================================================
-# 6. OCSP responder branch
-# ===================================================================
-
-
-class TestOCSPBranch:
-    def test_ocsp_registered_when_enabled_and_service_present(self):
-        from acmeeh.app.factory import create_app
-
-        settings = _make_mock_settings()
-        settings.ocsp.enabled = True
-        settings.ocsp.path = "/ocsp"
-        settings.metrics.enabled = False
-        settings.admin_api.enabled = False
-        config = _make_mock_config(settings)
-
-        mock_container = MagicMock()
-        mock_container.challenge_worker = None
-        mock_container.ocsp_service = MagicMock()  # service exists
-        mock_db = MagicMock()
-
-        with (
-            patch("acmeeh.app.context.Container", return_value=mock_container),
-            patch("acmeeh.api.register_blueprints"),
-            patch("acmeeh.app.factory.atexit"),
-        ):
-            app = create_app(config=config, database=mock_db)
-
-        bp_names = list(app.blueprints.keys())
-        assert "ocsp" in bp_names or any("ocsp" in n for n in bp_names), (
-            f"Expected OCSP blueprint; registered: {bp_names}"
-        )
-
-    def test_ocsp_not_registered_when_service_none(self):
-        from acmeeh.app.factory import create_app
-
-        settings = _make_mock_settings()
-        settings.ocsp.enabled = True
-        settings.ocsp.path = "/ocsp"
-        settings.metrics.enabled = False
-        settings.admin_api.enabled = False
-        config = _make_mock_config(settings)
-
-        mock_container = MagicMock()
-        mock_container.challenge_worker = None
-        mock_container.ocsp_service = None  # no OCSP service
-        mock_db = MagicMock()
-
-        with (
-            patch("acmeeh.app.context.Container", return_value=mock_container),
-            patch("acmeeh.api.register_blueprints"),
-            patch("acmeeh.app.factory.atexit"),
-        ):
-            app = create_app(config=config, database=mock_db)
-
-        bp_names = list(app.blueprints.keys())
-        assert "ocsp" not in bp_names
-
-
-# ===================================================================
 # 7. Admin API registration & bootstrap
 # ===================================================================
 
@@ -338,7 +283,7 @@ class TestAdminBootstrap:
         settings.admin_api.base_path = "/admin/"
         settings.admin_api.initial_admin_email = "admin@example.com"
         settings.metrics.enabled = False
-        settings.ocsp.enabled = False
+
         config = _make_mock_config(settings)
 
         mock_container = MagicMock()
@@ -390,7 +335,7 @@ class TestAdminBootstrap:
         settings = _make_mock_settings()
         settings.admin_api.enabled = False
         settings.metrics.enabled = False
-        settings.ocsp.enabled = False
+
         config = _make_mock_config(settings)
 
         mock_container = MagicMock()
@@ -414,7 +359,7 @@ class TestAdminBootstrap:
         settings.admin_api.enabled = True
         settings.admin_api.base_path = "/admin/"
         settings.metrics.enabled = False
-        settings.ocsp.enabled = False
+
         config = _make_mock_config(settings)
 
         mock_container = MagicMock()

@@ -24,6 +24,8 @@ def _smtp_settings(
     password="",
     use_tls=False,
     from_address="noreply@example.com",
+    cc=(),
+    bcc=(),
     timeout_seconds=10,
 ):
     return SimpleNamespace(
@@ -34,6 +36,8 @@ def _smtp_settings(
         password=password,
         use_tls=use_tls,
         from_address=from_address,
+        cc=cc,
+        bcc=bcc,
         timeout_seconds=timeout_seconds,
     )
 
@@ -45,6 +49,7 @@ def _notification_settings(
     retry_delay_seconds=60,
     retry_backoff_multiplier=2.0,
     retry_max_delay_seconds=3600,
+    disabled_types=(),
 ):
     return SimpleNamespace(
         enabled=enabled,
@@ -53,6 +58,7 @@ def _notification_settings(
         retry_delay_seconds=retry_delay_seconds,
         retry_backoff_multiplier=retry_backoff_multiplier,
         retry_max_delay_seconds=retry_max_delay_seconds,
+        disabled_types=disabled_types,
     )
 
 
@@ -391,6 +397,83 @@ class TestSendEmail:
         result = svc._send_email("user@test.com", "Subj", "<p>B</p>")
 
         assert result is False
+
+    @patch("acmeeh.services.notification.smtplib.SMTP")
+    def test_send_email_with_cc(self, mock_smtp_class):
+        mock_server = MagicMock()
+        mock_smtp_class.return_value.__enter__ = MagicMock(return_value=mock_server)
+        mock_smtp_class.return_value.__exit__ = MagicMock(return_value=False)
+
+        svc = _make_service(
+            smtp_settings=_smtp_settings(
+                enabled=True,
+                cc=("ops@test.com", "team@test.com"),
+                use_tls=False,
+                username="",
+            )
+        )
+
+        result = svc._send_email("user@test.com", "Subj", "<p>B</p>")
+
+        assert result is True
+        call_args = mock_server.sendmail.call_args
+        envelope = call_args[0][1]
+        assert envelope == ["user@test.com", "ops@test.com", "team@test.com"]
+        # Cc header present in the message
+        msg_str = call_args[0][2]
+        assert "Cc: ops@test.com, team@test.com" in msg_str
+
+    @patch("acmeeh.services.notification.smtplib.SMTP")
+    def test_send_email_with_bcc(self, mock_smtp_class):
+        mock_server = MagicMock()
+        mock_smtp_class.return_value.__enter__ = MagicMock(return_value=mock_server)
+        mock_smtp_class.return_value.__exit__ = MagicMock(return_value=False)
+
+        svc = _make_service(
+            smtp_settings=_smtp_settings(
+                enabled=True,
+                bcc=("audit@test.com",),
+                use_tls=False,
+                username="",
+            )
+        )
+
+        result = svc._send_email("user@test.com", "Subj", "<p>B</p>")
+
+        assert result is True
+        call_args = mock_server.sendmail.call_args
+        envelope = call_args[0][1]
+        assert envelope == ["user@test.com", "audit@test.com"]
+        # BCC must NOT appear in headers
+        msg_str = call_args[0][2]
+        assert "audit@test.com" not in msg_str.split("\n\n")[0].lower().replace("audit@test.com", "") or "Bcc" not in msg_str
+        assert "Bcc" not in msg_str
+
+    @patch("acmeeh.services.notification.smtplib.SMTP")
+    def test_send_email_with_cc_and_bcc(self, mock_smtp_class):
+        mock_server = MagicMock()
+        mock_smtp_class.return_value.__enter__ = MagicMock(return_value=mock_server)
+        mock_smtp_class.return_value.__exit__ = MagicMock(return_value=False)
+
+        svc = _make_service(
+            smtp_settings=_smtp_settings(
+                enabled=True,
+                cc=("ops@test.com",),
+                bcc=("audit@test.com",),
+                use_tls=False,
+                username="",
+            )
+        )
+
+        result = svc._send_email("user@test.com", "Subj", "<p>B</p>")
+
+        assert result is True
+        call_args = mock_server.sendmail.call_args
+        envelope = call_args[0][1]
+        assert envelope == ["user@test.com", "ops@test.com", "audit@test.com"]
+        msg_str = call_args[0][2]
+        assert "Cc: ops@test.com" in msg_str
+        assert "Bcc" not in msg_str
 
 
 # ---------------------------------------------------------------------------

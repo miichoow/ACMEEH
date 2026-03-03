@@ -350,9 +350,8 @@ class TestCreateOrder:
             svc.create_order(uuid4(), [{"type": "dns", "value": "a.com"}])
         assert exc_info.value.error_type == RATE_LIMITED
 
-    @patch("acmeeh.services.order.UnitOfWork")
     @patch("acmeeh.services.order.security_events")
-    def test_dedup_returns_existing(self, mock_se, mock_uow):
+    def test_dedup_returns_existing(self, mock_se):
         from acmeeh.models.order import Order
 
         existing_order = Order(
@@ -365,8 +364,6 @@ class TestCreateOrder:
         order_repo = MagicMock()
         order_repo.find_pending_for_dedup.return_value = existing_order
         order_repo.find_authorization_ids.return_value = []
-        mock_uow.return_value.__enter__ = MagicMock(return_value=MagicMock())
-        mock_uow.return_value.__exit__ = MagicMock(return_value=False)
 
         svc = _make_service(order_repo=order_repo)
         order, authz_ids = svc.create_order(uuid4(), [{"type": "dns", "value": "a.com"}])

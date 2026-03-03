@@ -136,7 +136,12 @@ class TestStaleDetection:
         status = crl_manager.health_status()
         assert status["stale"] is False
 
-    def test_no_cache_is_stale(self, crl_manager):
+    def test_no_cache_not_stale_during_grace_period(self, crl_manager):
+        status = crl_manager.health_status()
+        assert status["stale"] is False
+
+    def test_no_cache_is_stale_after_grace_period(self, crl_manager):
+        crl_manager._created_at = time.monotonic() - 9999
         status = crl_manager.health_status()
         assert status["stale"] is True
 

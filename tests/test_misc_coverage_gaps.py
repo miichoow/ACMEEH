@@ -674,7 +674,7 @@ class TestAddAcmeHeaders:
 
         app = Flask(__name__)
         mock_container = MagicMock()
-        mock_container.nonce_service.create.return_value = "fresh-nonce-abc"
+        mock_container.nonce_service.create_if_healthy.return_value = "fresh-nonce-abc"
         mock_container.urls.directory = "https://acme.example.com/directory"
         app.extensions["container"] = mock_container
 
@@ -699,7 +699,7 @@ class TestAddAcmeHeaders:
 
         app = Flask(__name__)
         mock_container = MagicMock()
-        mock_container.nonce_service.create.side_effect = RuntimeError("db down")
+        mock_container.nonce_service.create_if_healthy.side_effect = RuntimeError("db down")
         mock_container.urls.directory = "https://acme.example.com/directory"
         app.extensions["container"] = mock_container
 
@@ -724,7 +724,7 @@ class TestAddAcmeHeaders:
 
         app = Flask(__name__)
         mock_container = MagicMock()
-        mock_container.nonce_service.create.return_value = "nonce-123"
+        mock_container.nonce_service.create_if_healthy.return_value = "nonce-123"
         mock_container.urls.directory = "https://acme.example.com/directory"
         app.extensions["container"] = mock_container
 

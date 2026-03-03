@@ -1,22 +1,40 @@
 """Tests targeting uncovered lines in CleanupWorker, ChallengeWorker, and ExpirationWorker.
 
-Covers: leader election (acquire/release with DB), constructor task registration
+Covers: advisory lock context manager, constructor task registration
 for audit retention / rate-limit GC / data retention, static cleanup methods,
-ChallengeWorker._poll internals, ExpirationWorker._check_expirations and
+ChallengeWorker._collect_work/_process_work internals,
+ExpirationWorker._collect_expiring/_send_notifications and
 _try_claim_notice, and the _run loop when leader acquisition fails or the
 stop event fires mid-iteration.
 """
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from acmeeh.metrics.collector import MetricsCollector
 from acmeeh.services.cleanup_worker import CleanupWorker, _CleanupTask
 from acmeeh.services.expiration_worker import ExpirationWorker
 from acmeeh.services.workers import ChallengeWorker
+
+# ---------------------------------------------------------------------------
+# Mock advisory lock helpers for _run loop tests
+# ---------------------------------------------------------------------------
+
+
+@contextlib.contextmanager
+def _mock_advisory_lock_not_acquired(db, lock_id):
+    """Mock advisory_lock that always yields (False, None) (not leader)."""
+    yield False, None
+
+
+@contextlib.contextmanager
+def _mock_advisory_lock_acquired(db, lock_id):
+    """Mock advisory_lock that always yields (True, MagicMock()) (leader)."""
+    yield True, MagicMock()
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -180,56 +198,67 @@ class TestCleanupWorkerTaskRegistration:
 # ===========================================================================
 
 
-class TestCleanupWorkerLeaderElection:
-    """Leader election via advisory locks."""
+class TestAdvisoryLockContextManager:
+    """Tests for the advisory_lock context manager in db.init."""
 
-    def test_try_acquire_leader_no_db_returns_true(self):
-        """Line 204-205: no DB means always leader."""
-        worker = CleanupWorker()
-        assert worker._try_acquire_leader() is True
+    def test_no_db_yields_true(self):
+        """advisory_lock(None, ...) always yields (True, None)."""
+        from acmeeh.db.init import advisory_lock
 
-    def test_try_acquire_leader_with_db_success(self):
-        """Lines 206-212: DB fetch_value returns True -> leader acquired."""
+        with advisory_lock(None, 712_001) as (acquired, conn):
+            assert acquired is True
+            assert conn is None
+
+    def test_no_connection_method_yields_true(self):
+        """advisory_lock with db lacking connection() yields (True, None)."""
+        from acmeeh.db.init import advisory_lock
+
+        db = object()  # no connection method
+        with advisory_lock(db, 712_001) as (acquired, conn):
+            assert acquired is True
+            assert conn is None
+
+    def test_lock_acquired(self):
+        """When pg_try_advisory_lock returns True, yields (True, wrapper) and unlocks."""
+        from acmeeh.db.init import _ConnectionWrapper, advisory_lock
+
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (True,)
+        mock_conn.execute.return_value = mock_cursor
+
         db = MagicMock()
-        db.fetch_value.return_value = True
-        worker = CleanupWorker(db=db)
-        assert worker._try_acquire_leader() is True
-        db.fetch_value.assert_called_once()
+        db.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        db.connection.return_value.__exit__ = MagicMock(return_value=False)
 
-    def test_try_acquire_leader_with_db_returns_false(self):
-        """Lines 206-212: DB fetch_value returns False -> not leader."""
+        with advisory_lock(db, 712_001) as (acquired, conn):
+            assert acquired is True
+            assert isinstance(conn, _ConnectionWrapper)
+
+        # Should have called unlock on the SAME connection
+        calls = [str(c) for c in mock_conn.execute.call_args_list]
+        assert any("pg_advisory_unlock" in c for c in calls)
+
+    def test_lock_not_acquired(self):
+        """When pg_try_advisory_lock returns False, yields (False, None) (no unlock)."""
+        from acmeeh.db.init import advisory_lock
+
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (False,)
+        mock_conn.execute.return_value = mock_cursor
+
         db = MagicMock()
-        db.fetch_value.return_value = False
-        worker = CleanupWorker(db=db)
-        assert worker._try_acquire_leader() is False
+        db.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        db.connection.return_value.__exit__ = MagicMock(return_value=False)
 
-    def test_try_acquire_leader_exception_returns_false(self):
-        """Lines 213-215: exception during advisory lock returns False."""
-        db = MagicMock()
-        db.fetch_value.side_effect = RuntimeError("connection lost")
-        worker = CleanupWorker(db=db)
-        assert worker._try_acquire_leader() is False
+        with advisory_lock(db, 712_001) as (acquired, conn):
+            assert acquired is False
+            assert conn is None
 
-    def test_release_leader_no_db(self):
-        """Lines 219-220: no DB means release is a no-op."""
-        worker = CleanupWorker()
-        worker._release_leader()  # should not raise
-
-    def test_release_leader_with_db(self):
-        """Lines 221-225: calls advisory_unlock on DB."""
-        db = MagicMock()
-        worker = CleanupWorker(db=db)
-        worker._release_leader()
-        db.execute.assert_called_once()
-        call_args = db.execute.call_args
-        assert "pg_advisory_unlock" in call_args[0][0]
-
-    def test_release_leader_suppresses_exception(self):
-        """Lines 221-222: exception in release is suppressed."""
-        db = MagicMock()
-        db.execute.side_effect = RuntimeError("connection gone")
-        worker = CleanupWorker(db=db)
-        worker._release_leader()  # should not raise
+        # Should NOT have called unlock
+        calls = [str(c) for c in mock_conn.execute.call_args_list]
+        assert not any("pg_advisory_unlock" in c for c in calls)
 
 
 # ===========================================================================
@@ -240,10 +269,10 @@ class TestCleanupWorkerLeaderElection:
 class TestCleanupWorkerRunLoop:
     """Tests for the _run loop: leader failure and stop mid-iteration."""
 
+    @patch("acmeeh.db.init.advisory_lock", _mock_advisory_lock_not_acquired)
     def test_run_skips_when_leader_not_acquired(self):
-        """Lines 231-233: when leader not acquired, waits and continues."""
+        """When advisory lock not acquired, waits and continues."""
         db = MagicMock()
-        db.fetch_value.return_value = False  # not leader
         settings = _make_retention_settings()
         worker = CleanupWorker(settings=settings, db=db)
 
@@ -272,11 +301,11 @@ class TestCleanupWorkerRunLoop:
 
         call_order = []
 
-        def first_task():
+        def first_task(conn=None):
             call_order.append("first")
             worker._stop_event.set()  # set stop during first task
 
-        def second_task():
+        def second_task(conn=None):
             call_order.append("second")
 
         worker._tasks.append(_CleanupTask(name="first", interval_seconds=0, func=first_task))
@@ -295,7 +324,7 @@ class TestCleanupWorkerRunLoop:
         """Line 178-179: start() returns if thread is already alive."""
         worker = CleanupWorker()
         # Add a dummy task so start() doesn't bail for empty tasks
-        worker._tasks.append(_CleanupTask(name="dummy", interval_seconds=999, func=lambda: None))
+        worker._tasks.append(_CleanupTask(name="dummy", interval_seconds=999, func=lambda conn=None: None))
 
         mock_thread = MagicMock()
         mock_thread.is_alive.return_value = True
@@ -325,7 +354,7 @@ class TestCleanupWorkerStaticMethods:
 
         CleanupWorker._stale_processing_recovery(order_repo, 600)
 
-        order_repo.find_stale_processing.assert_called_once_with(600)
+        order_repo.find_stale_processing.assert_called_once_with(600, conn=None)
         assert order_repo.transition_status.call_count == 2
 
     def test_stale_processing_recovery_no_stale_orders(self):
@@ -335,7 +364,7 @@ class TestCleanupWorkerStaticMethods:
 
         CleanupWorker._stale_processing_recovery(order_repo, 600)
 
-        order_repo.find_stale_processing.assert_called_once_with(600)
+        order_repo.find_stale_processing.assert_called_once_with(600, conn=None)
         order_repo.transition_status.assert_not_called()
 
     def test_audit_retention_deletes_old_entries(self):
@@ -416,94 +445,28 @@ class TestCleanupWorkerStaticMethods:
 # ===========================================================================
 
 
-class TestChallengeWorkerLeaderElection:
-    """Leader election for ChallengeWorker."""
+class TestChallengeWorkerAdvisoryLockIntegration:
+    """Verify ChallengeWorker._run uses advisory_lock correctly."""
 
-    def test_try_acquire_no_db_returns_true(self):
-        """Lines 99-100: no DB means always leader."""
+    @patch("acmeeh.db.init.advisory_lock", _mock_advisory_lock_acquired)
+    def test_run_collects_work_when_leader(self):
+        """When advisory lock acquired, _collect_work is called with conn."""
         worker = ChallengeWorker(
             challenge_service=MagicMock(),
             challenge_repo=MagicMock(),
             authz_repo=MagicMock(),
             account_repo=MagicMock(),
+            db=MagicMock(),
         )
-        assert worker._try_acquire_leader() is True
+        worker._collect_work = MagicMock(return_value=[])
 
-    def test_try_acquire_with_db_success(self):
-        """Lines 101-107: fetch_value returns True -> leader."""
-        db = MagicMock()
-        db.fetch_value.return_value = True
-        worker = ChallengeWorker(
-            challenge_service=MagicMock(),
-            challenge_repo=MagicMock(),
-            authz_repo=MagicMock(),
-            account_repo=MagicMock(),
-            db=db,
-        )
-        assert worker._try_acquire_leader() is True
+        def stop_on_wait(timeout=None):
+            worker._stop_event.set()
 
-    def test_try_acquire_with_db_false(self):
-        """Lines 101-107: fetch_value returns False -> not leader."""
-        db = MagicMock()
-        db.fetch_value.return_value = False
-        worker = ChallengeWorker(
-            challenge_service=MagicMock(),
-            challenge_repo=MagicMock(),
-            authz_repo=MagicMock(),
-            account_repo=MagicMock(),
-            db=db,
-        )
-        assert worker._try_acquire_leader() is False
+        worker._stop_event.wait = stop_on_wait
+        worker._run()
 
-    def test_try_acquire_exception_returns_false(self):
-        """Lines 108-110: exception returns False."""
-        db = MagicMock()
-        db.fetch_value.side_effect = RuntimeError("gone")
-        worker = ChallengeWorker(
-            challenge_service=MagicMock(),
-            challenge_repo=MagicMock(),
-            authz_repo=MagicMock(),
-            account_repo=MagicMock(),
-            db=db,
-        )
-        assert worker._try_acquire_leader() is False
-
-    def test_release_leader_no_db(self):
-        """Lines 114-115: no DB -> no-op."""
-        worker = ChallengeWorker(
-            challenge_service=MagicMock(),
-            challenge_repo=MagicMock(),
-            authz_repo=MagicMock(),
-            account_repo=MagicMock(),
-        )
-        worker._release_leader()
-
-    def test_release_leader_with_db(self):
-        """Lines 116-119: calls advisory_unlock."""
-        db = MagicMock()
-        worker = ChallengeWorker(
-            challenge_service=MagicMock(),
-            challenge_repo=MagicMock(),
-            authz_repo=MagicMock(),
-            account_repo=MagicMock(),
-            db=db,
-        )
-        worker._release_leader()
-        db.execute.assert_called_once()
-        assert "pg_advisory_unlock" in db.execute.call_args[0][0]
-
-    def test_release_leader_suppresses_exception(self):
-        """Lines 116-117: exception during release is suppressed."""
-        db = MagicMock()
-        db.execute.side_effect = RuntimeError("oops")
-        worker = ChallengeWorker(
-            challenge_service=MagicMock(),
-            challenge_repo=MagicMock(),
-            authz_repo=MagicMock(),
-            account_repo=MagicMock(),
-            db=db,
-        )
-        worker._release_leader()  # should not raise
+        worker._collect_work.assert_called_once()
 
 
 # ===========================================================================
@@ -514,19 +477,18 @@ class TestChallengeWorkerLeaderElection:
 class TestChallengeWorkerRunLoop:
     """Tests for the _run loop when leader not acquired."""
 
+    @patch("acmeeh.db.init.advisory_lock", _mock_advisory_lock_not_acquired)
     def test_run_skips_poll_when_not_leader(self):
-        """Lines 125-127: when not leader, waits and continues."""
-        db = MagicMock()
-        db.fetch_value.return_value = False  # not leader
+        """When advisory lock not acquired, waits and continues."""
         worker = ChallengeWorker(
             challenge_service=MagicMock(),
             challenge_repo=MagicMock(),
             authz_repo=MagicMock(),
             account_repo=MagicMock(),
             poll_seconds=10,
-            db=db,
+            db=MagicMock(),
         )
-        worker._poll = MagicMock()
+        worker._collect_work = MagicMock(return_value=[])
 
         wait_timeouts = []
 
@@ -537,23 +499,23 @@ class TestChallengeWorkerRunLoop:
         worker._stop_event.wait = capture_wait
         worker._run()
 
-        worker._poll.assert_not_called()
+        worker._collect_work.assert_not_called()
         assert wait_timeouts == [10]
 
 
 # ===========================================================================
-# ChallengeWorker — _poll internals
+# ChallengeWorker — _collect_work / _process_work internals
 # ===========================================================================
 
 
-class TestChallengeWorkerPoll:
-    """Tests for _poll's challenge iteration logic."""
+class TestChallengeWorkerCollectAndProcess:
+    """Tests for _collect_work and _process_work internals."""
 
-    def test_poll_logs_released_stale_locks(self):
-        """Line 164: logs when released > 0."""
+    def test_collect_work_releases_stale_locks(self):
+        """_collect_work calls release_stale_locks and find_retryable."""
         challenge_repo = MagicMock()
         challenge_repo.release_stale_locks.return_value = 3
-        challenge_repo.find_by.return_value = []
+        challenge_repo.find_retryable.return_value = []
 
         worker = ChallengeWorker(
             challenge_service=MagicMock(),
@@ -561,67 +523,26 @@ class TestChallengeWorkerPoll:
             authz_repo=MagicMock(),
             account_repo=MagicMock(),
         )
-        worker._poll()
+        result = worker._collect_work()
         challenge_repo.release_stale_locks.assert_called_once()
+        challenge_repo.find_retryable.assert_called_once()
+        assert result == []
 
-    def test_poll_skips_non_pending_challenges(self):
-        """Line 180-181: challenges not PENDING are skipped."""
-        c = _make_challenge(status="valid", retry_count=1)
-        challenge_repo = MagicMock()
-        challenge_repo.release_stale_locks.return_value = 0
-        challenge_repo.find_by.return_value = [c]
-
+    def test_process_work_empty_list(self):
+        """_process_work with empty list does nothing."""
         service = MagicMock()
         worker = ChallengeWorker(
             challenge_service=service,
-            challenge_repo=challenge_repo,
+            challenge_repo=MagicMock(),
             authz_repo=MagicMock(),
             account_repo=MagicMock(),
         )
-        worker._poll()
+        worker._process_work([])
         service.process_pending.assert_not_called()
 
-    def test_poll_skips_zero_retry_count(self):
-        """Lines 182-183: challenges with retry_count < 1 are skipped."""
-        c = _make_challenge(status="pending", retry_count=0)
-        challenge_repo = MagicMock()
-        challenge_repo.release_stale_locks.return_value = 0
-        challenge_repo.find_by.return_value = [c]
-
-        service = MagicMock()
-        worker = ChallengeWorker(
-            challenge_service=service,
-            challenge_repo=challenge_repo,
-            authz_repo=MagicMock(),
-            account_repo=MagicMock(),
-        )
-        worker._poll()
-        service.process_pending.assert_not_called()
-
-    def test_poll_skips_challenge_in_backoff_window(self):
-        """Lines 185-186: next_retry_at in the future is skipped."""
-        future = datetime.now(UTC) + timedelta(hours=1)
-        c = _make_challenge(status="pending", retry_count=2, next_retry_at=future)
-        challenge_repo = MagicMock()
-        challenge_repo.release_stale_locks.return_value = 0
-        challenge_repo.find_by.return_value = [c]
-
-        service = MagicMock()
-        worker = ChallengeWorker(
-            challenge_service=service,
-            challenge_repo=challenge_repo,
-            authz_repo=MagicMock(),
-            account_repo=MagicMock(),
-        )
-        worker._poll()
-        service.process_pending.assert_not_called()
-
-    def test_poll_skips_if_authz_not_found(self):
-        """Lines 190-191: authz lookup returns None, challenge skipped."""
+    def test_process_work_skips_if_authz_not_found(self):
+        """authz lookup returns None, challenge skipped."""
         c = _make_challenge(status="pending", retry_count=1, next_retry_at=None)
-        challenge_repo = MagicMock()
-        challenge_repo.release_stale_locks.return_value = 0
-        challenge_repo.find_by.return_value = [c]
 
         authz_repo = MagicMock()
         authz_repo.find_by_id.return_value = None
@@ -629,19 +550,16 @@ class TestChallengeWorkerPoll:
         service = MagicMock()
         worker = ChallengeWorker(
             challenge_service=service,
-            challenge_repo=challenge_repo,
+            challenge_repo=MagicMock(),
             authz_repo=authz_repo,
             account_repo=MagicMock(),
         )
-        worker._poll()
+        worker._process_work([(c, None)])
         service.process_pending.assert_not_called()
 
-    def test_poll_skips_if_account_not_found(self):
-        """Lines 193-195: account lookup returns None, challenge skipped."""
+    def test_process_work_skips_if_account_not_found(self):
+        """account lookup returns None, challenge skipped."""
         c = _make_challenge(status="pending", retry_count=1, next_retry_at=None)
-        challenge_repo = MagicMock()
-        challenge_repo.release_stale_locks.return_value = 0
-        challenge_repo.find_by.return_value = [c]
 
         authz = MagicMock()
         authz.account_id = uuid.uuid4()
@@ -654,19 +572,17 @@ class TestChallengeWorkerPoll:
         service = MagicMock()
         worker = ChallengeWorker(
             challenge_service=service,
-            challenge_repo=challenge_repo,
+            challenge_repo=MagicMock(),
             authz_repo=authz_repo,
             account_repo=account_repo,
         )
-        worker._poll()
+        worker._process_work([(c, None)])
         service.process_pending.assert_not_called()
 
-    def test_poll_claims_and_processes_challenge(self):
-        """Lines 204-212: successful claim and process."""
+    def test_process_work_claims_and_processes_challenge(self):
+        """Successful claim and process."""
         c = _make_challenge(status="pending", retry_count=1, next_retry_at=None)
         challenge_repo = MagicMock()
-        challenge_repo.release_stale_locks.return_value = 0
-        challenge_repo.find_by.return_value = [c]
         challenge_repo.claim_for_processing.return_value = c
 
         authz = MagicMock()
@@ -686,15 +602,13 @@ class TestChallengeWorkerPoll:
             authz_repo=authz_repo,
             account_repo=account_repo,
         )
-        worker._poll()
+        worker._process_work([(c, None)])
         service.process_pending.assert_called_once()
 
-    def test_poll_skips_when_claim_returns_none(self):
-        """Lines 207-208: claim_for_processing returns None, skip."""
+    def test_process_work_skips_when_claim_returns_none(self):
+        """claim_for_processing returns None, skip."""
         c = _make_challenge(status="pending", retry_count=1, next_retry_at=None)
         challenge_repo = MagicMock()
-        challenge_repo.release_stale_locks.return_value = 0
-        challenge_repo.find_by.return_value = [c]
         challenge_repo.claim_for_processing.return_value = None
 
         authz = MagicMock()
@@ -714,15 +628,13 @@ class TestChallengeWorkerPoll:
             authz_repo=authz_repo,
             account_repo=account_repo,
         )
-        worker._poll()
+        worker._process_work([(c, None)])
         service.process_pending.assert_not_called()
 
-    def test_poll_handles_process_exception(self):
-        """Lines 213-216: exception during process_pending is caught."""
+    def test_process_work_handles_process_exception(self):
+        """Exception during process_pending is caught."""
         c = _make_challenge(status="pending", retry_count=1, next_retry_at=None)
         challenge_repo = MagicMock()
-        challenge_repo.release_stale_locks.return_value = 0
-        challenge_repo.find_by.return_value = [c]
         challenge_repo.claim_for_processing.return_value = c
 
         authz = MagicMock()
@@ -745,15 +657,13 @@ class TestChallengeWorkerPoll:
             account_repo=account_repo,
         )
         # Should not raise
-        worker._poll()
+        worker._process_work([(c, None)])
 
-    def test_poll_breaks_on_stop_event(self):
-        """Line 179: stop_event set during iteration breaks loop."""
+    def test_process_work_breaks_on_stop_event(self):
+        """stop_event set during iteration breaks loop."""
         c1 = _make_challenge(status="pending", retry_count=1, next_retry_at=None)
         c2 = _make_challenge(status="pending", retry_count=1, next_retry_at=None)
         challenge_repo = MagicMock()
-        challenge_repo.release_stale_locks.return_value = 0
-        challenge_repo.find_by.return_value = [c1, c2]
         challenge_repo.claim_for_processing.return_value = MagicMock()
 
         authz = MagicMock()
@@ -780,7 +690,7 @@ class TestChallengeWorkerPoll:
             authz_repo=authz_repo,
             account_repo=account_repo,
         )
-        worker._poll()
+        worker._process_work([(c1, None), (c2, None)])
         # Only one challenge was processed
         assert service.process_pending.call_count == 1
 
@@ -846,71 +756,28 @@ class TestExpirationWorkerStart:
 # ===========================================================================
 
 
-class TestExpirationWorkerLeaderElection:
-    """Leader election for ExpirationWorker."""
+class TestExpirationWorkerAdvisoryLockIntegration:
+    """Verify ExpirationWorker._run uses advisory_lock correctly."""
 
-    def test_try_acquire_no_db_returns_true(self):
-        """Lines 92-93: no DB -> always leader."""
-        settings = _make_notification_settings()
+    @patch("acmeeh.db.init.advisory_lock", _mock_advisory_lock_acquired)
+    def test_run_collects_when_leader(self):
+        """When advisory lock acquired, _collect_expiring is called with conn."""
+        settings = _make_notification_settings(interval=30)
         worker = ExpirationWorker(
             cert_repo=MagicMock(),
             notification_service=MagicMock(),
             settings=settings,
+            db=MagicMock(),
         )
-        assert worker._try_acquire_leader() is True
+        worker._collect_expiring = MagicMock(return_value=[])
 
-    def test_try_acquire_with_db_success(self):
-        """Lines 94-100: fetch_value True -> leader."""
-        db = MagicMock()
-        db.fetch_value.return_value = True
-        settings = _make_notification_settings()
-        worker = ExpirationWorker(
-            cert_repo=MagicMock(),
-            notification_service=MagicMock(),
-            settings=settings,
-            db=db,
-        )
-        assert worker._try_acquire_leader() is True
+        def stop_on_wait(timeout=None):
+            worker._stop_event.set()
 
-    def test_try_acquire_with_db_false(self):
-        """Lines 94-100: fetch_value False -> not leader."""
-        db = MagicMock()
-        db.fetch_value.return_value = False
-        settings = _make_notification_settings()
-        worker = ExpirationWorker(
-            cert_repo=MagicMock(),
-            notification_service=MagicMock(),
-            settings=settings,
-            db=db,
-        )
-        assert worker._try_acquire_leader() is False
+        worker._stop_event.wait = stop_on_wait
+        worker._run()
 
-    def test_try_acquire_exception_returns_false(self):
-        """Lines 101-103: exception returns False."""
-        db = MagicMock()
-        db.fetch_value.side_effect = RuntimeError("lost")
-        settings = _make_notification_settings()
-        worker = ExpirationWorker(
-            cert_repo=MagicMock(),
-            notification_service=MagicMock(),
-            settings=settings,
-            db=db,
-        )
-        assert worker._try_acquire_leader() is False
-
-    def test_release_leader_with_db(self):
-        """Lines 109-112: calls advisory_unlock."""
-        db = MagicMock()
-        settings = _make_notification_settings()
-        worker = ExpirationWorker(
-            cert_repo=MagicMock(),
-            notification_service=MagicMock(),
-            settings=settings,
-            db=db,
-        )
-        worker._release_leader()
-        db.execute.assert_called_once()
-        assert "pg_advisory_unlock" in db.execute.call_args[0][0]
+        worker._collect_expiring.assert_called_once()
 
 
 # ===========================================================================
@@ -921,18 +788,17 @@ class TestExpirationWorkerLeaderElection:
 class TestExpirationWorkerRunLoop:
     """Tests for the _run loop when leader not acquired."""
 
+    @patch("acmeeh.db.init.advisory_lock", _mock_advisory_lock_not_acquired)
     def test_run_skips_when_not_leader(self):
-        """Lines 118-122: when not leader, waits and continues."""
-        db = MagicMock()
-        db.fetch_value.return_value = False  # not leader
+        """When advisory lock not acquired, waits and continues."""
         settings = _make_notification_settings(interval=30)
         worker = ExpirationWorker(
             cert_repo=MagicMock(),
             notification_service=MagicMock(),
             settings=settings,
-            db=db,
+            db=MagicMock(),
         )
-        worker._check_expirations = MagicMock()
+        worker._collect_expiring = MagicMock(return_value=[])
 
         wait_timeouts = []
 
@@ -943,109 +809,124 @@ class TestExpirationWorkerRunLoop:
         worker._stop_event.wait = capture_wait
         worker._run()
 
-        worker._check_expirations.assert_not_called()
+        worker._collect_expiring.assert_not_called()
         assert wait_timeouts == [30]
 
 
 # ===========================================================================
-# ExpirationWorker — _check_expirations
+# ExpirationWorker — _collect_expiring / _send_notifications
 # ===========================================================================
 
 
-class TestExpirationWorkerCheckExpirations:
-    """Tests for _check_expirations internals."""
+class TestExpirationWorkerCollectAndSend:
+    """Tests for _collect_expiring and _send_notifications internals."""
 
-    def test_check_expirations_returns_on_stop(self):
-        """Line 161: if stop_event is set during cert iteration, returns."""
-        settings = _make_notification_settings(warning_days=[30])
-        cert_repo = MagicMock()
+    def test_send_notifications_returns_on_stop(self):
+        """If stop_event is set during cert iteration, returns."""
         cert1 = MagicMock()
         cert1.id = uuid.uuid4()
         cert1.account_id = uuid.uuid4()
         cert1.serial_number = "AABB"
         cert1.not_after_cert = datetime.now(UTC) + timedelta(days=20)
-        cert_repo.find_expiring.return_value = [cert1]
 
+        settings = _make_notification_settings(warning_days=[30])
         notifier = MagicMock()
         worker = ExpirationWorker(
-            cert_repo=cert_repo,
+            cert_repo=MagicMock(),
             notification_service=notifier,
             settings=settings,
         )
-        # Set stop event so _check_expirations returns before sending
+        # Set stop event so _send_notifications returns before sending
         worker._stop_event.set()
-        worker._check_expirations()
+        worker._send_notifications([(30, [cert1])])
         notifier.notify.assert_not_called()
 
-    def test_check_expirations_sends_notification_with_metrics(self):
-        """Line 182: metrics increment on successful notification."""
-        settings = _make_notification_settings(warning_days=[30])
-        cert_repo = MagicMock()
+    def test_send_notifications_sends_with_metrics(self):
+        """metrics increment on successful notification."""
         cert1 = MagicMock()
         cert1.id = uuid.uuid4()
         cert1.account_id = uuid.uuid4()
         cert1.serial_number = "CCDD"
         cert1.not_after_cert = datetime.now(UTC) + timedelta(days=20)
-        cert_repo.find_expiring.return_value = [cert1]
 
+        settings = _make_notification_settings(warning_days=[30])
         notifier = MagicMock()
         metrics = MetricsCollector()
         worker = ExpirationWorker(
-            cert_repo=cert_repo,
+            cert_repo=MagicMock(),
             notification_service=notifier,
             settings=settings,
             metrics=metrics,
         )
-        # _try_claim_notice returns True (no DB)
-        worker._check_expirations()
+        # _batch_claim_notices returns all items (no DB)
+        worker._send_notifications([(30, [cert1])])
         notifier.notify.assert_called_once()
         assert metrics.get("acmeeh_expiration_warnings_sent_total") == 1
 
-    def test_check_expirations_skips_when_claim_fails(self):
-        """Lines 165-166: _try_claim_notice returns False -> skip."""
-        settings = _make_notification_settings(warning_days=[7])
-        cert_repo = MagicMock()
+    def test_send_notifications_skips_when_claim_fails(self):
+        """Batch claim returns empty set -> skip notification."""
         cert1 = MagicMock()
         cert1.id = uuid.uuid4()
-        cert_repo.find_expiring.return_value = [cert1]
 
+        settings = _make_notification_settings(warning_days=[7])
         notifier = MagicMock()
         db = MagicMock()
-        # INSERT returns 0 rowcount -> claim fails
-        db.execute.return_value = 0
+        # Batch INSERT returns empty list (all conflicts)
+        db.fetch_all.return_value = []
 
         worker = ExpirationWorker(
-            cert_repo=cert_repo,
+            cert_repo=MagicMock(),
             notification_service=notifier,
             settings=settings,
             db=db,
         )
-        worker._check_expirations()
+        worker._send_notifications([(7, [cert1])])
         notifier.notify.assert_not_called()
 
+    def test_collect_expiring_calls_find_expiring(self):
+        """_collect_expiring queries each threshold."""
+        settings = _make_notification_settings(warning_days=[30, 7])
+        cert_repo = MagicMock()
+        cert_repo.find_expiring.return_value = []
+
+        worker = ExpirationWorker(
+            cert_repo=cert_repo,
+            notification_service=MagicMock(),
+            settings=settings,
+        )
+        result = worker._collect_expiring()
+        assert cert_repo.find_expiring.call_count == 2
+        assert result == []
+
 
 # ===========================================================================
-# ExpirationWorker — _try_claim_notice
+# ExpirationWorker — _batch_claim_notices
 # ===========================================================================
 
 
-class TestExpirationWorkerTryClaimNotice:
-    """Tests for _try_claim_notice."""
+class TestExpirationWorkerBatchClaimNotices:
+    """Tests for _batch_claim_notices (replaces per-item _try_claim_notice)."""
 
-    def test_try_claim_no_db_returns_true(self):
-        """Lines 191-193: no DB always returns True."""
+    def test_batch_claim_no_db_returns_all(self):
+        """No DB — cannot deduplicate, all items are claimed."""
         settings = _make_notification_settings()
         worker = ExpirationWorker(
             cert_repo=MagicMock(),
             notification_service=MagicMock(),
             settings=settings,
         )
-        assert worker._try_claim_notice(uuid.uuid4(), 30) is True
+        cert = MagicMock()
+        cert.id = uuid.uuid4()
+        result = worker._batch_claim_notices([(30, cert)])
+        assert (cert.id, 30) in result
 
-    def test_try_claim_with_db_success(self):
-        """Lines 194-201: rowcount == 1 -> True."""
+    def test_batch_claim_with_db_success(self):
+        """All items inserted (no conflicts) -> all claimed."""
+        cert_id = uuid.uuid4()
         db = MagicMock()
-        db.execute.return_value = 1
+        db.fetch_all.return_value = [
+            {"certificate_id": cert_id, "warning_days": 30},
+        ]
         settings = _make_notification_settings()
         worker = ExpirationWorker(
             cert_repo=MagicMock(),
@@ -1053,12 +934,15 @@ class TestExpirationWorkerTryClaimNotice:
             settings=settings,
             db=db,
         )
-        assert worker._try_claim_notice(uuid.uuid4(), 30) is True
+        cert = MagicMock()
+        cert.id = cert_id
+        result = worker._batch_claim_notices([(30, cert)])
+        assert (cert_id, 30) in result
 
-    def test_try_claim_with_db_conflict(self):
-        """Lines 194-201: rowcount == 0 (conflict) -> False."""
+    def test_batch_claim_with_db_conflict(self):
+        """All items conflict -> empty set returned."""
         db = MagicMock()
-        db.execute.return_value = 0
+        db.fetch_all.return_value = []  # all conflicts
         settings = _make_notification_settings()
         worker = ExpirationWorker(
             cert_repo=MagicMock(),
@@ -1066,12 +950,15 @@ class TestExpirationWorkerTryClaimNotice:
             settings=settings,
             db=db,
         )
-        assert worker._try_claim_notice(uuid.uuid4(), 7) is False
+        cert = MagicMock()
+        cert.id = uuid.uuid4()
+        result = worker._batch_claim_notices([(7, cert)])
+        assert len(result) == 0
 
-    def test_try_claim_exception_returns_false(self):
-        """Lines 202-208: exception during INSERT returns False."""
+    def test_batch_claim_exception_returns_empty(self):
+        """Exception during batch INSERT -> empty set (skip all to avoid dupes)."""
         db = MagicMock()
-        db.execute.side_effect = RuntimeError("db error")
+        db.fetch_all.side_effect = RuntimeError("db error")
         settings = _make_notification_settings()
         worker = ExpirationWorker(
             cert_repo=MagicMock(),
@@ -1079,4 +966,18 @@ class TestExpirationWorkerTryClaimNotice:
             settings=settings,
             db=db,
         )
-        assert worker._try_claim_notice(uuid.uuid4(), 30) is False
+        cert = MagicMock()
+        cert.id = uuid.uuid4()
+        result = worker._batch_claim_notices([(30, cert)])
+        assert len(result) == 0
+
+    def test_batch_claim_empty_items(self):
+        """Empty items list -> empty set."""
+        settings = _make_notification_settings()
+        worker = ExpirationWorker(
+            cert_repo=MagicMock(),
+            notification_service=MagicMock(),
+            settings=settings,
+        )
+        result = worker._batch_claim_notices([])
+        assert len(result) == 0

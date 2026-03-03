@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -231,15 +230,12 @@ def _ari_settings(**kwargs) -> AriSettings:
 class TestCreateRenewalOrder:
     """Tests for OrderService.create_renewal_order()."""
 
-    @patch("acmeeh.services.order.UnitOfWork")
-    def test_create_renewal_order_success(self, mock_uow):
+    def test_create_renewal_order_success(self):
         """Renewal order from a cert with san_values=['example.com'] succeeds.
 
         Verifies the returned order has PENDING status and the identifiers
         contain a DNS entry for 'example.com'.
         """
-        mock_uow.return_value.__enter__ = lambda self: self
-        mock_uow.return_value.__exit__ = lambda self, *a: None
 
         account_id = uuid4()
         cert_repo = StubCertRepo()
@@ -260,11 +256,9 @@ class TestCreateRenewalOrder:
         assert order.identifiers[0].value == "example.com"
         assert len(authz_ids) >= 1
 
-    @patch("acmeeh.services.order.UnitOfWork")
-    def test_create_renewal_order_cert_not_found(self, mock_uow):
+    def test_create_renewal_order_cert_not_found(self):
         """Renewal with a non-existent serial raises MALFORMED (404)."""
-        mock_uow.return_value.__enter__ = lambda self: self
-        mock_uow.return_value.__exit__ = lambda self, *a: None
+
 
         account_id = uuid4()
         cert_repo = StubCertRepo()
@@ -282,11 +276,9 @@ class TestCreateRenewalOrder:
         assert exc_info.value.status == 404
         assert "not found" in exc_info.value.detail.lower()
 
-    @patch("acmeeh.services.order.UnitOfWork")
-    def test_create_renewal_order_wrong_account(self, mock_uow):
+    def test_create_renewal_order_wrong_account(self):
         """Renewal for a cert owned by a different account raises UNAUTHORIZED."""
-        mock_uow.return_value.__enter__ = lambda self: self
-        mock_uow.return_value.__exit__ = lambda self, *a: None
+
 
         owner_id = uuid4()
         requester_id = uuid4()
@@ -306,11 +298,9 @@ class TestCreateRenewalOrder:
         assert exc_info.value.status == 403
         assert "does not belong" in exc_info.value.detail.lower()
 
-    @patch("acmeeh.services.order.UnitOfWork")
-    def test_create_renewal_order_no_sans(self, mock_uow):
+    def test_create_renewal_order_no_sans(self):
         """Renewal for a cert with no SAN values raises MALFORMED."""
-        mock_uow.return_value.__enter__ = lambda self: self
-        mock_uow.return_value.__exit__ = lambda self, *a: None
+
 
         account_id = uuid4()
         cert_repo = StubCertRepo()
@@ -328,11 +318,9 @@ class TestCreateRenewalOrder:
         assert exc_info.value.error_type == MALFORMED
         assert "no san values" in exc_info.value.detail.lower()
 
-    @patch("acmeeh.services.order.UnitOfWork")
-    def test_create_renewal_order_no_sans_none(self, mock_uow):
+    def test_create_renewal_order_no_sans_none(self):
         """Renewal for a cert with san_values=None also raises MALFORMED."""
-        mock_uow.return_value.__enter__ = lambda self: self
-        mock_uow.return_value.__exit__ = lambda self, *a: None
+
 
         account_id = uuid4()
         cert_repo = StubCertRepo()
@@ -350,13 +338,11 @@ class TestCreateRenewalOrder:
         assert exc_info.value.error_type == MALFORMED
         assert "no san values" in exc_info.value.detail.lower()
 
-    @patch("acmeeh.services.order.UnitOfWork")
-    def test_create_renewal_order_mixed_sans(self, mock_uow):
+    def test_create_renewal_order_mixed_sans(self):
         """Renewal for a cert with both DNS and IP SANs produces correct
         identifier types (dns -> DNS, valid IP -> IP).
         """
-        mock_uow.return_value.__enter__ = lambda self: self
-        mock_uow.return_value.__exit__ = lambda self, *a: None
+
 
         account_id = uuid4()
         cert_repo = StubCertRepo()

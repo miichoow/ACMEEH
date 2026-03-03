@@ -353,10 +353,10 @@ class TestAuditLog:
         assert resp.status_code == 200
         assert isinstance(resp.get_json(), list)
 
-    def test_auditor_gets_403(self, client, admin_service):
+    def test_auditor_can_view(self, client, admin_service):
         auditor = admin_service.add_user(username="auditor", role=AdminRole.AUDITOR)
         resp = client.get("/api/audit-log", headers=_auth_header(auditor))
-        assert resp.status_code == 403
+        assert resp.status_code == 200
 
 
 class TestInvalidToken:

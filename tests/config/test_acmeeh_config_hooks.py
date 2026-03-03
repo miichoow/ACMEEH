@@ -141,6 +141,38 @@ class TestIdentifierPolicyConfig:
         assert "admin_api.enabled is false" in caplog.text
 
 
+class TestRequireCsrProfileConfig:
+    def test_require_csr_profile_default_false(self, tmp_path):
+        config = _make_config(tmp_path)
+        assert config.settings.security.require_csr_profile is False
+
+    def test_require_csr_profile_true(self, tmp_path):
+        config = _make_config(
+            tmp_path,
+            {
+                "security": {"require_csr_profile": True},
+                "admin_api": {
+                    "enabled": True,
+                    "token_secret": "super-secret-key-1234",
+                    "initial_admin_email": "a@b.com",
+                    "base_path": "/admin",
+                },
+            },
+        )
+        assert config.settings.security.require_csr_profile is True
+
+    def test_warning_when_required_without_admin_api(self, tmp_path, caplog):
+        with caplog.at_level(logging.WARNING):
+            _make_config(
+                tmp_path,
+                {
+                    "security": {"require_csr_profile": True},
+                },
+            )
+        assert "require_csr_profile" in caplog.text
+        assert "admin_api.enabled is false" in caplog.text
+
+
 class TestConfigHooksWarnings:
     def test_global_hook_timeout_exceeds_server(self, tmp_path, caplog):
         with caplog.at_level(logging.WARNING):

@@ -208,10 +208,10 @@ class TestGetAuditLog:
         data = resp.get_json()
         assert len(data) <= 3
 
-    def test_auditor_cannot_view(self, client, admin_service):
+    def test_auditor_can_view(self, client, admin_service):
         auditor = admin_service.add_user(username="auditor", role=AdminRole.AUDITOR)
         resp = client.get("/api/audit-log", headers=_auth_header(auditor))
-        assert resp.status_code == 403
+        assert resp.status_code == 200
 
 
 class TestExportAuditLog:

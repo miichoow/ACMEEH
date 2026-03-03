@@ -97,6 +97,17 @@ class StubEabRepo:
             cred.used = True
             cred.account_id = account_id
 
+    def bind_account(self, kid: str, account_id: UUID):
+        cred = self._creds.get(kid)
+        if cred:
+            cred.account_id = account_id
+
+    def copy_to_account_by_kid(self, kid: str, account_id: UUID):
+        pass
+
+    def sync_linkage_to_account(self, account_id: UUID):
+        pass
+
 
 # ---------------------------------------------------------------------------
 # Stub repos for AccountService
@@ -257,6 +268,26 @@ class TestEabRequiredFlow:
         )
         with pytest.raises(AcmeProblem) as exc_info:
             service.create_or_find(jwk, tos_agreed=True, eab_payload=None)
+        assert "externalAccountRequired" in exc_info.value.error_type
+
+
+class TestEabRequiredButRepoUnavailable:
+    """EAB payload provided but eab_repo is None (admin API disabled)."""
+
+    def test_eab_payload_without_repo_raises(self):
+        _, jwk = _make_ec_jwk()
+        hmac_key = _make_hmac_key()
+        service = AccountService(
+            account_repo=StubAccountRepo(),
+            contact_repo=StubContactRepo(),
+            email_settings=FakeEmailSettings(),
+            tos_settings=FakeTosSettings(),
+            eab_repo=None,
+            eab_required=True,
+        )
+        eab_payload = _make_eab_jws("some-kid", hmac_key, jwk)
+        with pytest.raises(AcmeProblem) as exc_info:
+            service.create_or_find(jwk, tos_agreed=True, eab_payload=eab_payload)
         assert "externalAccountRequired" in exc_info.value.error_type
 
 

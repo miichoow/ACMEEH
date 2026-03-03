@@ -69,7 +69,6 @@ def _mock_config():
     cfg.settings.admin_api.enabled = False
     cfg.settings.crl.enabled = False
     cfg.settings.ari.enabled = False
-    cfg.settings.ocsp.enabled = False
     return cfg
 
 

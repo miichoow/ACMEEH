@@ -142,11 +142,17 @@ class StubAdminUserService:
 # ---------------------------------------------------------------------------
 
 
+class _AlwaysFoundAccountRepo:
+    def find_by_id(self, _id):
+        return True
+
+
 class StubContainer:
     def __init__(self, admin_service, settings):
         self.admin_service = admin_service
         self.settings = settings
         self.admin_user_repo = _StubUserRepo(admin_service)
+        self.accounts = _AlwaysFoundAccountRepo()
 
 
 class _StubUserRepo:

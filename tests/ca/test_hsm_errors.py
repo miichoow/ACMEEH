@@ -77,7 +77,6 @@ def _make_ca_settings(hsm: HsmSettings | None = None) -> CASettings:
         internal=CAInternalSettings(
             root_cert_path="",
             root_key_path="",
-            key_provider="file",
             chain_path=None,
             serial_source="database",
             hash_algorithm="sha256",
@@ -110,6 +109,7 @@ def _make_ca_settings(hsm: HsmSettings | None = None) -> CASettings:
         hsm=hsm or _make_hsm_settings(),
         circuit_breaker_failure_threshold=5,
         circuit_breaker_recovery_timeout=30.0,
+        deferred_signing_timeout=600,
     )
 
 

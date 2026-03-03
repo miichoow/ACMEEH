@@ -201,6 +201,64 @@ class TestCreateAllowedIdentifier:
         assert len(entries) == 1
         assert entries[0].details["identifier_value"] == "audit.com"
 
+    # --- DNS label validation ---
+
+    def test_leading_dash_rejected(self, service):
+        with pytest.raises(Exception) as exc_info:
+            service.create_allowed_identifier("dns", "-leading-dash.com")
+        assert "400" in str(exc_info.value.status)
+
+    def test_trailing_dash_rejected(self, service):
+        with pytest.raises(Exception) as exc_info:
+            service.create_allowed_identifier("dns", "trailing-.com")
+        assert "400" in str(exc_info.value.status)
+
+    def test_invalid_wildcard_mid_label(self, service):
+        with pytest.raises(Exception) as exc_info:
+            service.create_allowed_identifier("dns", "foo.*.com")
+        assert "400" in str(exc_info.value.status)
+
+    def test_multi_level_wildcard_rejected(self, service):
+        with pytest.raises(Exception) as exc_info:
+            service.create_allowed_identifier("dns", "*.*.example.com")
+        assert "400" in str(exc_info.value.status)
+
+    # --- IP range validation ---
+
+    def test_loopback_ipv4_rejected(self, service):
+        with pytest.raises(Exception) as exc_info:
+            service.create_allowed_identifier("ip", "127.0.0.1")
+        assert "400" in str(exc_info.value.status)
+
+    def test_loopback_ipv6_rejected(self, service):
+        with pytest.raises(Exception) as exc_info:
+            service.create_allowed_identifier("ip", "::1")
+        assert "400" in str(exc_info.value.status)
+
+    def test_unspecified_ipv4_rejected(self, service):
+        with pytest.raises(Exception) as exc_info:
+            service.create_allowed_identifier("ip", "0.0.0.0")
+        assert "400" in str(exc_info.value.status)
+
+    def test_multicast_rejected(self, service):
+        with pytest.raises(Exception) as exc_info:
+            service.create_allowed_identifier("ip", "224.0.0.1")
+        assert "400" in str(exc_info.value.status)
+
+    def test_private_ipv4_allowed(self, service):
+        """Private ranges are fine for internal PKI."""
+        ident = service.create_allowed_identifier("ip", "192.168.1.1")
+        assert ident.identifier_value == "192.168.1.1"
+
+    def test_valid_ipv6_allowed(self, service):
+        ident = service.create_allowed_identifier("ip", "2001:db8::1")
+        assert ident.identifier_value == "2001:db8::1"
+
+    def test_single_label_dns_allowed(self, service):
+        """Single-label names are valid for internal PKI."""
+        ident = service.create_allowed_identifier("dns", "intranet")
+        assert ident.identifier_value == "intranet"
+
 
 class TestGetAllowedIdentifier:
     def test_get_existing(self, service):

@@ -383,8 +383,7 @@ class TestDistributedRateLimiting:
         limiter = DatabaseRateLimiter(settings, mock_db)
         limiter.check("192.168.1.1", "new_account")
 
-        # Verify upsert was called
-        assert mock_db.execute.called
+        # Verify atomic upsert+fetch was called (single fetch_value with CTE)
         assert mock_db.fetch_value.called
 
     def test_database_rate_limiter_blocks_over_limit(self):
@@ -598,10 +597,10 @@ class TestCleanupWorker:
 
         call_log = []
 
-        def good_task():
+        def good_task(conn=None):
             call_log.append("good")
 
-        def bad_task():
+        def bad_task(conn=None):
             call_log.append("bad")
             raise RuntimeError("boom")
 
@@ -652,6 +651,7 @@ class TestExpirationWorker:
             expiration_check_interval_seconds=3600,
             retry_backoff_multiplier=2.0,
             retry_max_delay_seconds=3600,
+            disabled_types=(),
         )
 
         mock_cert = MagicMock()
@@ -671,8 +671,10 @@ class TestExpirationWorker:
         mock_notifier.notify.return_value = []
 
         mock_db = MagicMock()
-        # INSERT ON CONFLICT returns rowcount 1 (we won the claim)
-        mock_db.execute.return_value = 1
+        # Batch INSERT ON CONFLICT returns the claimed rows
+        mock_db.fetch_all.return_value = [
+            {"certificate_id": mock_cert.id, "warning_days": 7},
+        ]
 
         worker = ExpirationWorker(
             cert_repo=mock_cert_repo,
@@ -681,7 +683,8 @@ class TestExpirationWorker:
             db=mock_db,
         )
 
-        worker._check_expirations()
+        work = worker._collect_expiring()
+        worker._send_notifications(work)
 
         # Should have called find_expiring twice (once per threshold)
         assert mock_cert_repo.find_expiring.call_count == 2
@@ -706,6 +709,7 @@ class TestExpirationWorker:
             expiration_check_interval_seconds=3600,
             retry_backoff_multiplier=2.0,
             retry_max_delay_seconds=3600,
+            disabled_types=(),
         )
 
         mock_cert = MagicMock()
@@ -719,8 +723,8 @@ class TestExpirationWorker:
 
         mock_notifier = MagicMock()
         mock_db = MagicMock()
-        # Already notified — INSERT ON CONFLICT returns rowcount 0
-        mock_db.execute.return_value = 0
+        # Already notified — batch INSERT returns empty (all conflicts)
+        mock_db.fetch_all.return_value = []
 
         worker = ExpirationWorker(
             cert_repo=mock_cert_repo,
@@ -729,7 +733,8 @@ class TestExpirationWorker:
             db=mock_db,
         )
 
-        worker._check_expirations()
+        work = worker._collect_expiring()
+        worker._send_notifications(work)
         # Should NOT have sent notification (another instance already claimed it)
         mock_notifier.notify.assert_not_called()
 
@@ -747,6 +752,7 @@ class TestExpirationWorker:
             expiration_check_interval_seconds=1,
             retry_backoff_multiplier=2.0,
             retry_max_delay_seconds=3600,
+            disabled_types=(),
         )
 
         mock_cert_repo = MagicMock()
@@ -779,6 +785,7 @@ class TestExpirationWorker:
             expiration_check_interval_seconds=3600,
             retry_backoff_multiplier=2.0,
             retry_max_delay_seconds=3600,
+            disabled_types=(),
         )
         worker = ExpirationWorker(
             cert_repo=MagicMock(),

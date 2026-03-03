@@ -334,7 +334,18 @@ class TestGetCrlLocked:
         """Scenario 10: after a full rebuild in HA mode, _write_db_cache called."""
         # DB cache returns None (no row or stale)
         mock_db.fetch_one.return_value = None
-        mock_db.fetch_value.return_value = True  # advisory lock acquired
+
+        # _write_db_cache now uses db.connection() context manager
+        # so the advisory lock + upsert run on a single connection
+        mock_conn = MagicMock()
+        lock_row = MagicMock()
+        lock_row.__getitem__ = lambda self, i: True  # row[0] -> True (lock acquired)
+        lock_row.__bool__ = lambda self: True
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = lock_row
+        mock_conn.execute.return_value = mock_cursor
+        mock_db.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_db.connection.return_value.__exit__ = MagicMock(return_value=False)
 
         p1, p2 = _patch_builders()
         with p1 as MockCRL, p2:
@@ -342,8 +353,9 @@ class TestGetCrlLocked:
 
             ha_manager._get_crl_locked()
 
-            # DB execute called for the INSERT/UPSERT
-            mock_db.execute.assert_called()
+            # Connection used for the lock + upsert
+            mock_db.connection.assert_called_once()
+            assert mock_conn.execute.call_count >= 2  # lock + upsert (+ unlock)
 
     def test_first_build_when_no_cache_and_no_db(self, manager, cert_repo):
         """No cache, no DB -> full build."""
@@ -450,7 +462,16 @@ class TestForceRebuild:
 
     def test_force_rebuild_with_db_write(self, ha_manager, mock_db):
         """Scenario 14: force_rebuild writes to DB in HA mode."""
-        mock_db.fetch_value.return_value = True  # advisory lock
+        # _write_db_cache now uses db.connection() context manager
+        mock_conn = MagicMock()
+        lock_row = MagicMock()
+        lock_row.__getitem__ = lambda self, i: True
+        lock_row.__bool__ = lambda self: True
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = lock_row
+        mock_conn.execute.return_value = mock_cursor
+        mock_db.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_db.connection.return_value.__exit__ = MagicMock(return_value=False)
 
         p1, p2 = _patch_builders()
         with p1 as MockCRL, p2:
@@ -458,9 +479,9 @@ class TestForceRebuild:
 
             ha_manager.force_rebuild()
 
-            # DB write should have been triggered
-            mock_db.fetch_value.assert_called_once()
-            mock_db.execute.assert_called()
+            # Connection used for the lock + upsert
+            mock_db.connection.assert_called_once()
+            assert mock_conn.execute.call_count >= 2
 
     def test_force_rebuild_clears_previous_error(self, manager):
         """force_rebuild resets _last_rebuild_error."""
@@ -493,7 +514,9 @@ class TestHealthStatus:
         assert status["stale"] is False  # 10s < 2*3600
 
     def test_health_status_without_cache(self, manager):
-        """Scenario 16: no cache -> last_rebuild is None, stale is True."""
+        """Scenario 16: no cache -> last_rebuild is None, stale after grace period."""
+        # Push creation time past the startup grace period
+        manager._created_at = time.monotonic() - 9999
         status = manager.health_status()
         assert status["last_rebuild"] is None
         assert status["stale"] is True
@@ -522,9 +545,13 @@ class TestHealthStatus:
 
 
 class TestIsStale:
-    def test_no_cache_is_stale(self, manager):
-        """Scenario 18: no cached CRL -> always stale."""
+    def test_no_cache_is_stale_after_grace_period(self, manager):
+        """Scenario 18: no cached CRL -> stale after startup grace period."""
         assert manager._cached_crl is None
+        # Within grace period: not stale yet
+        assert manager._is_stale() is False
+        # After grace period: stale
+        manager._created_at = time.monotonic() - 9999
         assert manager._is_stale() is True
 
     def test_fresh_cache_is_not_stale(self, manager):
@@ -618,61 +645,91 @@ class TestReadDbCache:
 
 
 class TestWriteDbCache:
+    """_write_db_cache now uses db.connection() to pin all operations
+    (advisory lock, upsert, unlock) to a single connection, preventing
+    session-level advisory lock leaks across pool connections.
+    """
+
+    @staticmethod
+    def _setup_conn_mock(mock_db, lock_acquired=True):
+        """Wire up mock_db.connection() as a context manager returning a mock conn."""
+        mock_conn = MagicMock()
+        # conn.execute(...).fetchone() returns a row where row[0] = lock_acquired
+        lock_row = MagicMock()
+        lock_row.__getitem__ = lambda self, i: lock_acquired
+        lock_row.__bool__ = lambda self: bool(lock_acquired)
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = lock_row
+        mock_conn.execute.return_value = mock_cursor
+        mock_db.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_db.connection.return_value.__exit__ = MagicMock(return_value=False)
+        return mock_conn
+
     def test_got_lock_and_writes(self, ha_manager, mock_db):
         """Scenario 25: advisory lock acquired -> upsert executed, lock released."""
-        mock_db.fetch_value.return_value = True
+        mock_conn = self._setup_conn_mock(mock_db, lock_acquired=True)
         ha_manager._last_revoked_count = 5
 
         ha_manager._write_db_cache(b"\x30\x00")
 
-        # Advisory lock acquired
-        mock_db.fetch_value.assert_called_once()
-        lock_id = CRLManager._ADVISORY_LOCK_ID
-
-        # execute called at least twice: INSERT and advisory_unlock
-        assert mock_db.execute.call_count >= 2
-        # The first execute is the upsert
-        first_call = mock_db.execute.call_args_list[0]
-        assert b"\x30\x00" in first_call[0][1]  # crl_bytes in params
-        assert 5 in first_call[0][1]  # revoked_count in params
-        # The last execute is the unlock
-        last_call = mock_db.execute.call_args_list[-1]
-        assert "pg_advisory_unlock" in last_call[0][0]
+        # All operations go through a single connection
+        mock_db.connection.assert_called_once()
+        # At least 3 calls: lock, upsert, unlock
+        assert mock_conn.execute.call_count >= 3
+        # First call is advisory lock
+        first_sql = mock_conn.execute.call_args_list[0][0][0]
+        assert "pg_try_advisory_lock" in first_sql
+        # Last call is advisory unlock
+        last_sql = mock_conn.execute.call_args_list[-1][0][0]
+        assert "pg_advisory_unlock" in last_sql
 
     def test_no_lock_returns_without_writing(self, ha_manager, mock_db):
         """Scenario 26: another instance holds lock -> skip write."""
-        mock_db.fetch_value.return_value = False
+        mock_conn = self._setup_conn_mock(mock_db, lock_acquired=False)
 
         ha_manager._write_db_cache(b"\x30\x00")
 
-        mock_db.fetch_value.assert_called_once()
-        mock_db.execute.assert_not_called()
+        mock_db.connection.assert_called_once()
+        # Only the lock attempt call, no upsert or unlock
+        assert mock_conn.execute.call_count == 1
 
     def test_exception_handled_gracefully(self, ha_manager, mock_db):
-        """Scenario 27: DB exception during write -> swallowed."""
-        mock_db.fetch_value.side_effect = RuntimeError("connection error")
+        """Scenario 27: DB exception during connection -> swallowed."""
+        mock_db.connection.side_effect = RuntimeError("connection error")
 
         # Should not raise
         ha_manager._write_db_cache(b"\x30\x00")
 
     def test_lock_released_even_on_execute_error(self, ha_manager, mock_db):
         """Advisory lock is released even when the INSERT fails."""
-        mock_db.fetch_value.return_value = True
+        mock_conn = self._setup_conn_mock(mock_db, lock_acquired=True)
 
         call_count = [0]
+        # Build a fetchone result for the lock check
+        lock_row = MagicMock()
+        lock_row.__getitem__ = lambda self, i: True
+        lock_row.__bool__ = lambda self: True
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = lock_row
 
         def execute_side_effect(*args, **kwargs):
             call_count[0] += 1
             if call_count[0] == 1:
+                # First call: advisory lock check — return cursor
+                return mock_cursor
+            if call_count[0] == 2:
+                # Second call: upsert — fails
                 raise RuntimeError("insert failed")
-            # Second call (unlock) succeeds
+            # Third call: unlock — succeeds
+            return mock_cursor
 
-        mock_db.execute.side_effect = execute_side_effect
+        mock_conn.execute.side_effect = execute_side_effect
 
-        # The outer try/except catches the RuntimeError from the finally block
-        # actually the inner finally runs the unlock, then the outer except catches
-        # We just verify no unhandled exception escapes
+        # Should not raise — outer try/except catches it
         ha_manager._write_db_cache(b"\x30\x00")
+
+        # The unlock call should still have been attempted (in the finally)
+        assert call_count[0] >= 3
 
 
 # ---------------------------------------------------------------------------
@@ -895,8 +952,18 @@ class TestGetCrlIntegration:
     def test_ha_mode_full_cycle(self, ha_manager, mock_db, cert_repo):
         """HA mode: DB miss -> build -> DB write -> cache."""
         mock_db.fetch_one.return_value = None  # no DB cache
-        mock_db.fetch_value.return_value = True  # advisory lock OK
         cert_repo.find_revoked.return_value = []
+
+        # Wire up connection() context manager for _write_db_cache
+        mock_conn = MagicMock()
+        lock_row = MagicMock()
+        lock_row.__getitem__ = lambda self, i: True
+        lock_row.__bool__ = lambda self: True
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = lock_row
+        mock_conn.execute.return_value = mock_cursor
+        mock_db.connection.return_value.__enter__ = MagicMock(return_value=mock_conn)
+        mock_db.connection.return_value.__exit__ = MagicMock(return_value=False)
 
         p1, p2 = _patch_builders()
         with p1 as MockCRL, p2:
@@ -907,5 +974,5 @@ class TestGetCrlIntegration:
 
             # DB was queried for cache
             mock_db.fetch_one.assert_called_once()
-            # DB was written to
-            mock_db.execute.assert_called()
+            # DB write went through connection() context manager
+            mock_db.connection.assert_called_once()

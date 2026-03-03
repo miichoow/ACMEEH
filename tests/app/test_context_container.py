@@ -2,7 +2,7 @@
 
 Covers lines 89-457 (constructor) and 460-477 (get_container) which were
 previously untested.  Each optional subsystem (admin, challenge worker,
-CAA, CT, ARI, CRL, OCSP, metrics) is toggled individually to exercise
+CAA, CT, ARI, CRL, metrics) is toggled individually to exercise
 all constructor branches.
 
 Strategy:
@@ -92,9 +92,8 @@ def _make_settings(**overrides):  # noqa: C901, PLR0912
     # -- admin API ---------------------------------------------------------
     s.admin_api.enabled = False
 
-    # -- CRL / OCSP --------------------------------------------------------
+    # -- CRL ---------------------------------------------------------------
     s.crl.enabled = False
-    s.ocsp.enabled = False
 
     # -- metrics -----------------------------------------------------------
     s.metrics.enabled = False
@@ -245,7 +244,6 @@ class TestContainerMinimal:
         assert c.challenge_worker is None
         assert c.renewal_info_service is None
         assert c.crl_manager is None
-        assert c.ocsp_service is None
         assert c.metrics_collector is None
 
     def test_metrics_backpatch_sets_none(self, mock_db, base_settings):
@@ -487,12 +485,12 @@ class TestContainerCRL:
             }
         )
 
-        # The patched CircuitBreakerCABackend mock is what becomes
-        # container.ca_backend.  Give it root_cert / root_key attrs
-        # so the hasattr() check passes.
+        # root_cert / root_key live on the unwrapped (raw) backend —
+        # _patched[0] is load_ca_backend, whose return_value is _raw_ca.
+        raw_mock = _patched[0].return_value
+        raw_mock.root_cert = MagicMock(name="root_cert")
+        raw_mock.root_key = MagicMock(name="root_key")
         cb_mock = _patched[1].return_value
-        cb_mock.root_cert = MagicMock(name="root_cert")
-        cb_mock.root_key = MagicMock(name="root_key")
 
         with patch("acmeeh.ca.crl.CRLManager") as mock_crl_cls:
             mock_crl_cls.return_value = MagicMock(name="CRLManager")
@@ -503,7 +501,7 @@ class TestContainerCRL:
             assert c.crl_manager is mock_crl_cls.return_value
 
     def test_crl_manager_none_when_no_root_cert(self, mock_db, _patched):
-        """When startup_check is called but root_cert is missing."""
+        """When startup_check is called but root_cert is missing on raw backend."""
         settings = _make_settings(
             **{
                 "crl.enabled": True,
@@ -511,9 +509,9 @@ class TestContainerCRL:
             }
         )
 
-        cb_mock = _patched[1].return_value
-        # Simulate no root_cert attribute
-        del cb_mock.root_cert
+        raw_mock = _patched[0].return_value
+        # Simulate no root_cert attribute on the unwrapped backend
+        del raw_mock.root_cert
 
         c = Container(mock_db, settings)
         assert c.crl_manager is None
@@ -531,66 +529,6 @@ class TestContainerCRL:
     def test_crl_manager_none_when_disabled(self, mock_db, base_settings):
         c = Container(mock_db, base_settings)
         assert c.crl_manager is None
-
-
-# ---------------------------------------------------------------------------
-# Tests — OCSP service enabled
-# ---------------------------------------------------------------------------
-
-
-class TestContainerOCSP:
-    """Exercise the OCSP branch (lines 405-423)."""
-
-    @pytest.fixture(autouse=True)
-    def _setup_patches(self, _patched):
-        pass
-
-    def test_ocsp_service_created_when_internal_backend(self, mock_db, _patched):
-        settings = _make_settings(
-            **{
-                "ocsp.enabled": True,
-                "ca.backend": "internal",
-                "ocsp.hash_algorithm": "sha256",
-            }
-        )
-
-        cb_mock = _patched[1].return_value
-        cb_mock.root_cert = MagicMock(name="root_cert")
-        cb_mock.root_key = MagicMock(name="root_key")
-
-        with patch("acmeeh.services.ocsp.OCSPService") as mock_ocsp_cls:
-            mock_ocsp_cls.return_value = MagicMock(name="OCSPService")
-            c = Container(mock_db, settings)
-
-            cb_mock.startup_check.assert_called()
-            assert c.ocsp_service is mock_ocsp_cls.return_value
-
-    def test_ocsp_service_none_when_no_root_cert(self, mock_db, _patched):
-        settings = _make_settings(
-            **{
-                "ocsp.enabled": True,
-                "ca.backend": "internal",
-            }
-        )
-        cb_mock = _patched[1].return_value
-        del cb_mock.root_cert
-
-        c = Container(mock_db, settings)
-        assert c.ocsp_service is None
-
-    def test_ocsp_service_none_when_not_internal(self, mock_db):
-        settings = _make_settings(
-            **{
-                "ocsp.enabled": True,
-                "ca.backend": "external",
-            }
-        )
-        c = Container(mock_db, settings)
-        assert c.ocsp_service is None
-
-    def test_ocsp_service_none_when_disabled(self, mock_db, base_settings):
-        c = Container(mock_db, base_settings)
-        assert c.ocsp_service is None
 
 
 # ---------------------------------------------------------------------------
@@ -637,46 +575,6 @@ class TestContainerMetrics:
 
 
 # ---------------------------------------------------------------------------
-# Tests — CRL + OCSP together (both call startup_check)
-# ---------------------------------------------------------------------------
-
-
-class TestContainerCRLAndOCSP:
-    """When both CRL and OCSP are enabled, startup_check is called twice."""
-
-    @pytest.fixture(autouse=True)
-    def _setup_patches(self, _patched):
-        pass
-
-    def test_both_created(self, mock_db, _patched):
-        settings = _make_settings(
-            **{
-                "crl.enabled": True,
-                "ocsp.enabled": True,
-                "ca.backend": "internal",
-                "ocsp.hash_algorithm": "sha256",
-            }
-        )
-
-        cb_mock = _patched[1].return_value
-        cb_mock.root_cert = MagicMock(name="root_cert")
-        cb_mock.root_key = MagicMock(name="root_key")
-
-        with (
-            patch("acmeeh.ca.crl.CRLManager") as mock_crl_cls,
-            patch("acmeeh.services.ocsp.OCSPService") as mock_ocsp_cls,
-        ):
-            mock_crl_cls.return_value = MagicMock(name="CRLManager")
-            mock_ocsp_cls.return_value = MagicMock(name="OCSPService")
-            c = Container(mock_db, settings)
-
-            assert c.crl_manager is not None
-            assert c.ocsp_service is not None
-            # startup_check called once for CRL and once for OCSP
-            assert cb_mock.startup_check.call_count == 2
-
-
-# ---------------------------------------------------------------------------
 # Tests — All optional features enabled simultaneously
 # ---------------------------------------------------------------------------
 
@@ -701,22 +599,19 @@ class TestContainerAllFeaturesEnabled:
                 "ct_logging.submit_precert": True,
                 "ari.enabled": True,
                 "crl.enabled": True,
-                "ocsp.enabled": True,
-                "ocsp.hash_algorithm": "sha256",
                 "ca.backend": "internal",
                 "metrics.enabled": True,
             }
         )
 
-        cb_mock = _patched[1].return_value
-        cb_mock.root_cert = MagicMock(name="root_cert")
-        cb_mock.root_key = MagicMock(name="root_key")
+        raw_mock = _patched[0].return_value
+        raw_mock.root_cert = MagicMock(name="root_cert")
+        raw_mock.root_key = MagicMock(name="root_key")
 
         with (
             patch("acmeeh.ca.caa.CAAValidator"),
             patch("acmeeh.ca.ct.CTPreCertSubmitter"),
             patch("acmeeh.ca.crl.CRLManager"),
-            patch("acmeeh.services.ocsp.OCSPService"),
             patch("acmeeh.metrics.collector.MetricsCollector"),
         ):
             c = Container(mock_db, settings)
@@ -726,7 +621,6 @@ class TestContainerAllFeaturesEnabled:
             assert c.challenge_worker is not None
             assert c.renewal_info_service is not None
             assert c.crl_manager is not None
-            assert c.ocsp_service is not None
             assert c.metrics_collector is not None
 
             # Core attributes still present

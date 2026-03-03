@@ -30,6 +30,7 @@ def _make_container(**overrides):
 
     # DB succeeds by default; no pool (avoids MagicMock serialisation issues)
     container.db.fetch_value.return_value = 1
+    container.db.pool = None
     container.db._pool = None
 
     # No CRL manager by default
@@ -73,7 +74,8 @@ class TestHealthzNoContainer:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["status"] == "ok"
-        assert data["version"] == "0.0.0-test"
+        # Version no longer exposed (info disclosure hardening)
+        assert "version" not in data
         # No database key when container is absent
         assert "database" not in data
 
@@ -91,7 +93,7 @@ class TestHealthzDatabase:
 
         assert resp.status_code == 200
         assert data["status"] == "ok"
-        assert data["checks"]["database"] == "connected"
+        assert data["checks"]["database"] == "ok"
 
     def test_healthz_db_disconnected(self):
         container = _make_container()
@@ -104,7 +106,7 @@ class TestHealthzDatabase:
 
         assert resp.status_code == 503
         assert data["status"] == "degraded"
-        assert data["checks"]["database"] == "disconnected"
+        assert data["checks"]["database"] == "error"
 
 
 class TestHealthzWorkers:
@@ -120,10 +122,8 @@ class TestHealthzWorkers:
 
         assert resp.status_code == 200
         assert data["status"] == "ok"
-        assert "workers" in data
-        assert data["workers"]["challenge_worker"] == "alive"
-        assert data["workers"]["cleanup_worker"] == "alive"
-        assert data["workers"]["expiration_worker"] == "alive"
+        # Workers now report aggregate status only (no per-worker names)
+        assert data["checks"]["workers"] == "ok"
 
     def test_healthz_worker_dead(self):
         container = _make_container()
@@ -137,10 +137,7 @@ class TestHealthzWorkers:
 
         assert resp.status_code == 503
         assert data["status"] == "degraded"
-        assert data["workers"]["cleanup_worker"] == "dead"
-        # Other workers should still be alive
-        assert data["workers"]["challenge_worker"] == "alive"
-        assert data["workers"]["expiration_worker"] == "alive"
+        assert data["checks"]["workers"] == "degraded"
 
 
 class TestHealthzCABackend:
@@ -174,7 +171,7 @@ class TestHealthzCABackend:
 class TestHealthzShutdownCoordinator:
     """Shutdown coordinator status in /healthz response."""
 
-    def test_healthz_shutting_down_reported(self):
+    def test_healthz_shutting_down_degrades(self):
         container = _make_container()
         shutdown_coord = MagicMock()
         shutdown_coord.is_shutting_down = True
@@ -184,7 +181,8 @@ class TestHealthzShutdownCoordinator:
         resp = client.get("/healthz")
         data = resp.get_json()
 
-        assert data["shutting_down"] is True
+        # Shutdown state reflected via degraded status, not exposed directly
+        assert data["status"] == "degraded"
 
     def test_healthz_not_shutting_down(self):
         container = _make_container()
@@ -196,7 +194,8 @@ class TestHealthzShutdownCoordinator:
         resp = client.get("/healthz")
         data = resp.get_json()
 
-        assert data["shutting_down"] is False
+        # Not shutting down — no degradation from this alone
+        assert "shutting_down" not in data
 
 
 class TestHealthzCRL:
@@ -214,7 +213,7 @@ class TestHealthzCRL:
 
         assert resp.status_code == 503
         assert data["status"] == "degraded"
-        assert data["checks"]["crl"]["stale"] is True
+        assert data["checks"]["crl"] == "stale"
 
     def test_healthz_crl_fresh(self):
         crl_manager = MagicMock()
@@ -227,13 +226,14 @@ class TestHealthzCRL:
         data = resp.get_json()
 
         assert resp.status_code == 200
-        assert data["checks"]["crl"]["stale"] is False
+        assert data["checks"]["crl"] == "ok"
 
 
 class TestHealthzPool:
     """Connection pool stats in /healthz response."""
 
-    def test_healthz_pool_stats_included(self):
+    def test_healthz_pool_healthy_no_stats_exposed(self):
+        """Pool stats are no longer exposed in healthz (info disclosure hardening)."""
         container = _make_container()
         pool = MagicMock()
         pool.get_stats.return_value = {
@@ -250,10 +250,9 @@ class TestHealthzPool:
         resp = client.get("/healthz")
         data = resp.get_json()
 
-        assert "pool" in data
-        assert data["pool"]["size"] == 10
-        assert data["pool"]["available"] == 5
-        assert data["pool"]["waiting"] == 0
+        # Pool internals must not be exposed
+        assert "pool" not in data
+        assert resp.status_code == 200
 
     def test_healthz_pool_exhausted_degrades(self):
         container = _make_container()
@@ -274,8 +273,8 @@ class TestHealthzPool:
 
         assert resp.status_code == 503
         assert data["status"] == "degraded"
-        assert data["pool"]["available"] == 0
-        assert data["pool"]["waiting"] == 3
+        # Pool internals must not be exposed
+        assert "pool" not in data
 
 
 # ---------------------------------------------------------------------------

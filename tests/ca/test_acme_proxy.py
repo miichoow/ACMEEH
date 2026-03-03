@@ -64,7 +64,6 @@ def _make_ca_settings(proxy: AcmeProxySettings | None = None) -> CASettings:
         internal=CAInternalSettings(
             root_cert_path="",
             root_key_path="",
-            key_provider="file",
             chain_path=None,
             serial_source="database",
             hash_algorithm="sha256",
@@ -100,6 +99,7 @@ def _make_ca_settings(proxy: AcmeProxySettings | None = None) -> CASettings:
         ),
         circuit_breaker_failure_threshold=5,
         circuit_breaker_recovery_timeout=30.0,
+        deferred_signing_timeout=600,
     )
 
 
@@ -213,7 +213,8 @@ class TestStartupCheck:
         settings = _make_ca_settings()
         backend = AcmeProxyBackend(settings)
 
-        with patch.dict("sys.modules", {"acmeow": mock_acmeow}):
+        mock_acmeow_enums = MagicMock()
+        with patch.dict("sys.modules", {"acmeow": mock_acmeow, "acmeow.enums": mock_acmeow_enums}):
             backend.startup_check()
 
         call_kwargs = mock_acmeow.AcmeClient.call_args[1]
@@ -234,7 +235,8 @@ class TestStartupCheck:
         settings = _make_ca_settings(proxy)
         backend = AcmeProxyBackend(settings)
 
-        with patch.dict("sys.modules", {"acmeow": mock_acmeow}):
+        mock_acmeow_enums = MagicMock()
+        with patch.dict("sys.modules", {"acmeow": mock_acmeow, "acmeow.enums": mock_acmeow_enums}):
             backend.startup_check()
 
         mock_client.set_external_account_binding.assert_called_once_with(

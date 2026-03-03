@@ -164,6 +164,7 @@ def _container(**overrides):
     # Nonce service -- consume succeeds by default
     c.nonce_service.consume.return_value = True
     c.nonce_service.create.return_value = "new-nonce"
+    c.nonce_service.create_if_healthy.return_value = "new-nonce"
 
     # Settings (used by decorator for URL reconstruction & algorithm policy)
     c.settings.api.base_path = "/"

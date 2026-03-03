@@ -21,6 +21,7 @@ def _make_db_settings(
     max_connections=10,
     connection_timeout=5.0,
     auto_setup=True,
+    max_idle_seconds=300.0,
 ):
     return SimpleNamespace(
         host=host,
@@ -33,6 +34,7 @@ def _make_db_settings(
         max_connections=max_connections,
         connection_timeout=connection_timeout,
         auto_setup=auto_setup,
+        max_idle_seconds=max_idle_seconds,
     )
 
 
@@ -70,6 +72,8 @@ class TestSettingsToConfig:
             min_connections=2,
             max_connections=20,
             connection_timeout=10.0,
+            max_idle_time=300.0,
+            options={"prepare_threshold": None},
         )
 
     @patch("acmeeh.db.init.DatabaseConfig")
@@ -89,6 +93,8 @@ class TestSettingsToConfig:
             min_connections=1,
             max_connections=10,
             connection_timeout=5.0,
+            max_idle_time=300.0,
+            options={"prepare_threshold": None},
         )
 
 

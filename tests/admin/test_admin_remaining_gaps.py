@@ -199,7 +199,11 @@ class StubAdminService:
 
     # Certificates
     def search_certificates(self, filters, limit=50, offset=0):
-        return self._certificates[offset : offset + limit]
+        certs = self._certificates
+        if "serial_numbers" in filters:
+            serial_set = set(filters["serial_numbers"])
+            certs = [c for c in certs if c.serial_number in serial_set]
+        return certs[offset : offset + limit]
 
     def get_certificate_by_serial(self, serial):
         for c in self._certificates:

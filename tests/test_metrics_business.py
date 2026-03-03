@@ -271,8 +271,7 @@ class TestAccountDeactivatedMetric:
 class TestOrderCreatedMetric:
     """test_order_created_metric: verify acmeeh_orders_created_total."""
 
-    @patch("acmeeh.services.order.UnitOfWork")
-    def test_order_created_metric(self, mock_uow_cls):
+    def test_order_created_metric(self):
         metrics = MetricsCollector()
         order_repo = MagicMock()
         authz_repo = MagicMock()
@@ -283,10 +282,6 @@ class TestOrderCreatedMetric:
         order_repo.find_pending_for_dedup.return_value = None
         # No reusable authorization
         authz_repo.find_reusable.return_value = None
-
-        # UnitOfWork context manager mock
-        mock_uow_cls.return_value.__enter__ = MagicMock(return_value=MagicMock())
-        mock_uow_cls.return_value.__exit__ = MagicMock(return_value=False)
 
         svc = OrderService(
             order_repo=order_repo,
@@ -701,8 +696,7 @@ class TestMetricsNoneSafe:
         result = svc.deactivate(_ACCOUNT_ID)
         assert result is not None
 
-    @patch("acmeeh.services.order.UnitOfWork")
-    def test_order_service_metrics_none(self, mock_uow_cls):
+    def test_order_service_metrics_none(self):
         """OrderService with metrics=None creates order without error."""
         order_repo = MagicMock()
         authz_repo = MagicMock()
@@ -711,9 +705,6 @@ class TestMetricsNoneSafe:
 
         order_repo.find_pending_for_dedup.return_value = None
         authz_repo.find_reusable.return_value = None
-
-        mock_uow_cls.return_value.__enter__ = MagicMock(return_value=MagicMock())
-        mock_uow_cls.return_value.__exit__ = MagicMock(return_value=False)
 
         svc = OrderService(
             order_repo=order_repo,

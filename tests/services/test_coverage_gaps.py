@@ -4,22 +4,14 @@ Targets:
 1. acmeeh.logging.security_events — 14 uncovered functions
 2. acmeeh.services.key_change.KeyChangeService — 4 branches
 3. acmeeh.services.nonce.NonceService — expired nonce + gc
-4. acmeeh.services.ocsp.OCSPService — revoked w/ reason + sign exception
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
-from unittest.mock import MagicMock, patch
-from uuid import UUID, uuid4
+from unittest.mock import MagicMock
+from uuid import uuid4
 
 import pytest
-from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
-from cryptography.x509 import ocsp
-from cryptography.x509.oid import NameOID
 
 # ===================================================================
 # Section 1: security_events — exercise all 14 uncovered functions
@@ -273,7 +265,6 @@ class TestKeyChangeSuccess:
 # ===================================================================
 
 
-from acmeeh.models.nonce import Nonce
 from acmeeh.services.nonce import NonceService
 
 
@@ -293,71 +284,37 @@ def _nonce_settings(**overrides):
     return ns
 
 
-class TestNonceServiceExpiredNonce:
-    """Lines 85-90 — nonce exceeds max_age, consume returns False."""
+class TestNonceServiceConsume:
+    """consume() delegates directly to repo.consume() (single DB round-trip)."""
 
-    def test_stale_nonce_rejected(self):
-        old_time = datetime.now(UTC) - timedelta(seconds=120)
-        nonce_entity = Nonce(
-            nonce="test-nonce-123",
-            expires_at=datetime.now(UTC) + timedelta(seconds=3600),
-            created_at=old_time,
-        )
+    def test_valid_nonce_consumed(self):
         repo = MagicMock()
-        repo.find_by_id.return_value = nonce_entity
         repo.consume.return_value = True
 
         settings = _nonce_settings(max_age_seconds=60)
         svc = NonceService(repo, settings)
 
-        result = svc.consume("test-nonce-123")
+        assert svc.consume("good-nonce") is True
+        repo.consume.assert_called_once_with("good-nonce")
 
-        assert result is False
-        repo.consume.assert_called_once_with("test-nonce-123")
-
-    def test_fresh_nonce_accepted(self):
-        recent = datetime.now(UTC) - timedelta(seconds=10)
-        nonce_entity = Nonce(
-            nonce="fresh-nonce",
-            expires_at=datetime.now(UTC) + timedelta(seconds=3600),
-            created_at=recent,
-        )
+    def test_unknown_nonce_rejected(self):
         repo = MagicMock()
-        repo.find_by_id.return_value = nonce_entity
-        repo.consume.return_value = True
+        repo.consume.return_value = False
 
         settings = _nonce_settings(max_age_seconds=60)
         svc = NonceService(repo, settings)
 
-        result = svc.consume("fresh-nonce")
-        assert result is True
+        assert svc.consume("missing") is False
 
-    def test_nonce_not_found_returns_false(self):
+    def test_expired_nonce_rejected(self):
+        """repo.consume() returns False for expired nonces (SQL WHERE expires_at > now())."""
         repo = MagicMock()
-        repo.find_by_id.return_value = None
+        repo.consume.return_value = False
 
         settings = _nonce_settings(max_age_seconds=60)
         svc = NonceService(repo, settings)
 
-        result = svc.consume("missing")
-        assert result is False
-
-    def test_nonce_without_created_at(self):
-        """Nonce with created_at=None skips max-age check."""
-        nonce_entity = Nonce(
-            nonce="no-ts",
-            expires_at=datetime.now(UTC) + timedelta(seconds=3600),
-            created_at=None,
-        )
-        repo = MagicMock()
-        repo.find_by_id.return_value = nonce_entity
-        repo.consume.return_value = True
-
-        settings = _nonce_settings(max_age_seconds=60)
-        svc = NonceService(repo, settings)
-
-        result = svc.consume("no-ts")
-        assert result is True
+        assert svc.consume("expired-nonce") is False
 
 
 class TestNonceServiceGc:
@@ -383,255 +340,30 @@ class TestNonceServiceGc:
         assert svc.gc() == 0
 
 
-class TestNonceServiceMaxAgeFallback:
-    """Constructor falls back to min(expiry_seconds, 300) when max_age_seconds=0."""
+class TestNonceServiceBatchCreation:
+    """Nonce batch pre-generation creates nonces via bulk_create."""
 
-    def test_max_age_defaults_to_min_expiry_or_300(self):
-        settings = _nonce_settings(max_age_seconds=0, expiry_seconds=600)
-        svc = NonceService(MagicMock(), settings)
-        assert svc._max_age == timedelta(seconds=300)
+    def test_create_refills_buffer_on_empty(self):
+        repo = MagicMock()
+        repo.bulk_create.return_value = 100
 
-    def test_max_age_uses_expiry_when_less_than_300(self):
-        settings = _nonce_settings(max_age_seconds=0, expiry_seconds=120)
-        svc = NonceService(MagicMock(), settings)
-        assert svc._max_age == timedelta(seconds=120)
+        settings = _nonce_settings()
+        svc = NonceService(repo, settings)
 
+        token = svc.create()
+        assert token is not None
+        repo.bulk_create.assert_called_once()
+        # Buffer should now have 99 remaining nonces (100 - 1 returned)
+        assert len(svc._buffer) == 99
 
-# ===================================================================
-# Section 4: OCSPService — revoked with reason + sign exception
-# ===================================================================
+    def test_create_falls_back_to_single_on_batch_failure(self):
+        repo = MagicMock()
+        repo.bulk_create.side_effect = RuntimeError("pool exhausted")
+        repo.create.return_value = None
 
+        settings = _nonce_settings()
+        svc = NonceService(repo, settings)
 
-from acmeeh.config.settings import OcspSettings
-from acmeeh.core.types import RevocationReason
-from acmeeh.services.ocsp import OCSPService
-
-
-def _ocsp_settings(**kwargs) -> OcspSettings:
-    defaults = dict(
-        enabled=True,
-        path="/ocsp",
-        response_validity_seconds=3600,
-        hash_algorithm="sha256",
-    )
-    defaults.update(kwargs)
-    return OcspSettings(**defaults)
-
-
-def _generate_ca():
-    key = ec.generate_private_key(ec.SECP256R1())
-    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Test CA")])
-    now = datetime.now(UTC)
-    cert = (
-        x509.CertificateBuilder()
-        .subject_name(name)
-        .issuer_name(name)
-        .public_key(key.public_key())
-        .serial_number(1)
-        .not_valid_before(now)
-        .not_valid_after(now + timedelta(days=3650))
-        .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
-        .sign(key, hashes.SHA256())
-    )
-    return cert, key
-
-
-def _build_leaf_cert(ca_cert, ca_key, serial: int) -> x509.Certificate:
-    leaf_key = ec.generate_private_key(ec.SECP256R1())
-    now = datetime.now(UTC)
-    return (
-        x509.CertificateBuilder()
-        .subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "leaf.test")]))
-        .issuer_name(ca_cert.subject)
-        .public_key(leaf_key.public_key())
-        .serial_number(serial)
-        .not_valid_before(now)
-        .not_valid_after(now + timedelta(days=90))
-        .sign(ca_key, hashes.SHA256())
-    )
-
-
-def _build_ocsp_request_for_leaf(
-    leaf_cert: x509.Certificate, issuer_cert: x509.Certificate
-) -> bytes:
-    builder = ocsp.OCSPRequestBuilder()
-    builder = builder.add_certificate(leaf_cert, issuer_cert, hashes.SHA256())
-    return builder.build().public_bytes(serialization.Encoding.DER)
-
-
-@dataclass(frozen=True)
-class FakeCert:
-    id: UUID
-    serial_number: str
-    not_before_cert: datetime
-    not_after_cert: datetime
-    revoked_at: datetime | None = None
-    revocation_reason: RevocationReason | None = None
-
-
-class StubCertRepo:
-    def __init__(self):
-        self._by_serial: dict[str, FakeCert] = {}
-
-    def add(self, cert: FakeCert):
-        self._by_serial[cert.serial_number] = cert
-
-    def find_by_serial(self, serial_hex: str) -> FakeCert | None:
-        return self._by_serial.get(serial_hex)
-
-
-@pytest.fixture
-def ca_pair():
-    return _generate_ca()
-
-
-@pytest.fixture
-def cert_repo():
-    return StubCertRepo()
-
-
-class TestOCSPRevokedWithReason:
-    """Lines 93-96 — revoked cert with a revocation_reason attribute."""
-
-    def test_revoked_with_key_compromise_reason(self, ca_pair, cert_repo):
-        root_cert, root_key = ca_pair
-        now = datetime.now(UTC)
-        revoked_at = now - timedelta(hours=1)
-
-        serial = 0xBEEF01
-        leaf_cert = _build_leaf_cert(root_cert, root_key, serial)
-        serial_hex = format(serial, "x")
-
-        cert_repo.add(
-            FakeCert(
-                id=uuid4(),
-                serial_number=serial_hex,
-                not_before_cert=now - timedelta(days=5),
-                not_after_cert=now + timedelta(days=85),
-                revoked_at=revoked_at,
-                revocation_reason=RevocationReason.KEY_COMPROMISE,
-            )
-        )
-
-        service = OCSPService(cert_repo, root_cert, root_key, _ocsp_settings())
-        ocsp_req_der = _build_ocsp_request_for_leaf(leaf_cert, root_cert)
-        result = service.handle_request(ocsp_req_der)
-
-        resp = ocsp.load_der_ocsp_response(result)
-        assert resp.response_status == ocsp.OCSPResponseStatus.SUCCESSFUL
-        assert resp.certificate_status == ocsp.OCSPCertStatus.REVOKED
-
-    def test_revoked_with_cessation_reason(self, ca_pair, cert_repo):
-        root_cert, root_key = ca_pair
-        now = datetime.now(UTC)
-
-        serial = 0xBEEF02
-        leaf_cert = _build_leaf_cert(root_cert, root_key, serial)
-        serial_hex = format(serial, "x")
-
-        cert_repo.add(
-            FakeCert(
-                id=uuid4(),
-                serial_number=serial_hex,
-                not_before_cert=now - timedelta(days=5),
-                not_after_cert=now + timedelta(days=85),
-                revoked_at=now - timedelta(hours=2),
-                revocation_reason=RevocationReason.CESSATION_OF_OPERATION,
-            )
-        )
-
-        service = OCSPService(cert_repo, root_cert, root_key, _ocsp_settings())
-        ocsp_req_der = _build_ocsp_request_for_leaf(leaf_cert, root_cert)
-        result = service.handle_request(ocsp_req_der)
-
-        resp = ocsp.load_der_ocsp_response(result)
-        assert resp.response_status == ocsp.OCSPResponseStatus.SUCCESSFUL
-        assert resp.certificate_status == ocsp.OCSPCertStatus.REVOKED
-
-    def test_revoked_with_unspecified_reason(self, ca_pair, cert_repo):
-        root_cert, root_key = ca_pair
-        now = datetime.now(UTC)
-
-        serial = 0xBEEF03
-        leaf_cert = _build_leaf_cert(root_cert, root_key, serial)
-        serial_hex = format(serial, "x")
-
-        cert_repo.add(
-            FakeCert(
-                id=uuid4(),
-                serial_number=serial_hex,
-                not_before_cert=now - timedelta(days=5),
-                not_after_cert=now + timedelta(days=85),
-                revoked_at=now - timedelta(hours=3),
-                revocation_reason=RevocationReason.UNSPECIFIED,
-            )
-        )
-
-        service = OCSPService(cert_repo, root_cert, root_key, _ocsp_settings())
-        ocsp_req_der = _build_ocsp_request_for_leaf(leaf_cert, root_cert)
-        result = service.handle_request(ocsp_req_der)
-
-        resp = ocsp.load_der_ocsp_response(result)
-        assert resp.response_status == ocsp.OCSPResponseStatus.SUCCESSFUL
-        assert resp.certificate_status == ocsp.OCSPCertStatus.REVOKED
-
-
-class TestOCSPSignException:
-    """Lines 128-130 — exception during builder.sign returns INTERNAL_ERROR."""
-
-    def test_sign_failure_returns_internal_error(self, ca_pair, cert_repo):
-        root_cert, root_key = ca_pair
-        now = datetime.now(UTC)
-
-        serial = 0xDEAD02
-        leaf_cert = _build_leaf_cert(root_cert, root_key, serial)
-        serial_hex = format(serial, "x")
-
-        cert_repo.add(
-            FakeCert(
-                id=uuid4(),
-                serial_number=serial_hex,
-                not_before_cert=now - timedelta(days=5),
-                not_after_cert=now + timedelta(days=85),
-            )
-        )
-
-        service = OCSPService(cert_repo, root_cert, root_key, _ocsp_settings())
-
-        ocsp_req_der = _build_ocsp_request_for_leaf(leaf_cert, root_cert)
-
-        # Patch OCSPResponseBuilder.sign to raise an exception
-        with patch.object(ocsp.OCSPResponseBuilder, "sign", side_effect=RuntimeError("boom")):
-            result = service.handle_request(ocsp_req_der)
-
-        resp = ocsp.load_der_ocsp_response(result)
-        assert resp.response_status == ocsp.OCSPResponseStatus.INTERNAL_ERROR
-
-    def test_sign_failure_with_revoked_cert(self, ca_pair, cert_repo):
-        root_cert, root_key = ca_pair
-        now = datetime.now(UTC)
-
-        serial = 0xDEAD03
-        leaf_cert = _build_leaf_cert(root_cert, root_key, serial)
-        serial_hex = format(serial, "x")
-
-        cert_repo.add(
-            FakeCert(
-                id=uuid4(),
-                serial_number=serial_hex,
-                not_before_cert=now - timedelta(days=5),
-                not_after_cert=now + timedelta(days=85),
-                revoked_at=now - timedelta(hours=1),
-                revocation_reason=RevocationReason.KEY_COMPROMISE,
-            )
-        )
-
-        service = OCSPService(cert_repo, root_cert, root_key, _ocsp_settings())
-
-        ocsp_req_der = _build_ocsp_request_for_leaf(leaf_cert, root_cert)
-
-        with patch.object(ocsp.OCSPResponseBuilder, "sign", side_effect=ValueError("bad key")):
-            result = service.handle_request(ocsp_req_der)
-
-        resp = ocsp.load_der_ocsp_response(result)
-        assert resp.response_status == ocsp.OCSPResponseStatus.INTERNAL_ERROR
+        token = svc.create()
+        assert token is not None
+        repo.create.assert_called_once()

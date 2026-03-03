@@ -93,7 +93,7 @@ class TestChallengeWorkerBackoff:
     def test_challenge_worker_backoff_on_failure(self):
         """_consecutive_failures increments and backoff delay increases."""
         worker = _make_challenge_worker(poll_seconds=10)
-        worker._poll = MagicMock(side_effect=RuntimeError("db down"))
+        worker._collect_work = MagicMock(side_effect=RuntimeError("db down"))
 
         wait_timeouts: list[float] = []
         original_set = worker._stop_event.set
@@ -118,7 +118,7 @@ class TestChallengeWorkerBackoff:
 
         # Simulate three prior failures.
         worker._consecutive_failures = 3
-        worker._poll = MagicMock()  # succeeds
+        worker._collect_work = MagicMock(return_value=[])  # succeeds
 
         _run_one_iteration(worker)
 
@@ -127,7 +127,7 @@ class TestChallengeWorkerBackoff:
     def test_challenge_worker_backoff_cap(self):
         """Backoff is capped at 300 seconds regardless of failure count."""
         worker = _make_challenge_worker(poll_seconds=10)
-        worker._poll = MagicMock(side_effect=RuntimeError("fail"))
+        worker._collect_work = MagicMock(side_effect=RuntimeError("fail"))
 
         # Pre-set a high failure count so 10 * 2^20 would be huge.
         worker._consecutive_failures = 19
@@ -153,7 +153,7 @@ class TestChallengeWorkerMetrics:
         """acmeeh_challenge_worker_errors_total increments on poll failure."""
         metrics = MetricsCollector()
         worker = _make_challenge_worker(poll_seconds=5, metrics=metrics)
-        worker._poll = MagicMock(side_effect=RuntimeError("boom"))
+        worker._collect_work = MagicMock(side_effect=RuntimeError("boom"))
 
         _run_one_iteration(worker)
 
@@ -163,7 +163,7 @@ class TestChallengeWorkerMetrics:
         """acmeeh_challenge_worker_polls_total increments on successful poll."""
         metrics = MetricsCollector()
         worker = _make_challenge_worker(poll_seconds=5, metrics=metrics)
-        worker._poll = MagicMock()  # succeeds
+        worker._collect_work = MagicMock(return_value=[])  # succeeds
 
         _run_one_iteration(worker)
 
@@ -202,7 +202,7 @@ class TestCleanupTaskBackoff:
         """consecutive_failures resets to 0 after a successful run."""
         call_count = 0
 
-        def sometimes_fail():
+        def sometimes_fail(conn=None):
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
@@ -282,7 +282,7 @@ class TestExpirationWorkerBackoff:
         """Backoff increases exponentially: interval * 2^failures."""
         interval = 60
         worker = _make_expiration_worker(interval_seconds=interval)
-        worker._check_expirations = MagicMock(
+        worker._collect_expiring = MagicMock(
             side_effect=RuntimeError("db unreachable"),
         )
 
@@ -307,7 +307,7 @@ class TestExpirationWorkerBackoff:
         """Backoff is capped at interval * 8 even for many failures."""
         interval = 60
         worker = _make_expiration_worker(interval_seconds=interval)
-        worker._check_expirations = MagicMock(
+        worker._collect_expiring = MagicMock(
             side_effect=RuntimeError("fail"),
         )
 
@@ -331,7 +331,7 @@ class TestExpirationWorkerBackoff:
         """Successful _check_expirations resets _consecutive_failures to 0."""
         worker = _make_expiration_worker(interval_seconds=30)
         worker._consecutive_failures = 5
-        worker._check_expirations = MagicMock()  # succeeds
+        worker._collect_expiring = MagicMock(return_value=[])  # succeeds
 
         _run_one_iteration(worker)
 
@@ -341,7 +341,7 @@ class TestExpirationWorkerBackoff:
         """acmeeh_expiration_worker_errors_total increments on failure."""
         metrics = MetricsCollector()
         worker = _make_expiration_worker(interval_seconds=30, metrics=metrics)
-        worker._check_expirations = MagicMock(
+        worker._collect_expiring = MagicMock(
             side_effect=RuntimeError("fail"),
         )
 

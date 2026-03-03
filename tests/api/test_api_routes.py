@@ -1,4 +1,4 @@
-"""Unit tests for ACMEEH API route modules: CRL, metrics, OCSP, and renewal info.
+"""Unit tests for ACMEEH API route modules: CRL, metrics, and renewal info.
 
 Tests each blueprint in isolation using a minimal Flask app with the
 container set directly on ``app.extensions["container"]``, which is
@@ -7,7 +7,6 @@ exactly where ``get_container()`` looks it up.
 
 from __future__ import annotations
 
-import base64
 from unittest.mock import MagicMock, patch
 
 from flask import Flask
@@ -246,116 +245,6 @@ class TestMetricsEndpoint:
                     headers={"Authorization": "Bearer valid-token"},
                 )
         assert resp.status_code == 200
-
-
-# =========================================================================
-# OCSP endpoint
-# =========================================================================
-
-
-class TestOCSPEndpoint:
-    """Tests for POST/GET /ocsp — acmeeh.api.ocsp.ocsp_bp."""
-
-    def _register(self, app: Flask) -> None:
-        from acmeeh.api.ocsp import ocsp_bp
-
-        app.register_blueprint(ocsp_bp, url_prefix="/ocsp")
-
-    def test_post_ocsp_success(self):
-        container = MagicMock()
-        container.ocsp_service.handle_request.return_value = b"\x30\x03"
-
-        app = _make_app(container=container)
-        self._register(app)
-
-        with app.test_client() as client:
-            resp = client.post(
-                "/ocsp",
-                data=b"\x30\x00",
-                content_type="application/ocsp-request",
-            )
-        assert resp.status_code == 200
-        assert resp.headers["Content-Type"] == "application/ocsp-response"
-        assert resp.data == b"\x30\x03"
-
-    def test_post_ocsp_not_enabled_no_attr(self):
-        container = MagicMock(spec=[])
-
-        app = _make_app(container=container)
-        self._register(app)
-
-        with app.test_client() as client:
-            resp = client.post("/ocsp", data=b"\x30\x00")
-        assert resp.status_code == 503
-
-    def test_post_ocsp_not_enabled_none(self):
-        container = MagicMock()
-        container.ocsp_service = None
-
-        app = _make_app(container=container)
-        self._register(app)
-
-        with app.test_client() as client:
-            resp = client.post("/ocsp", data=b"\x30\x00")
-        assert resp.status_code == 503
-
-    def test_post_ocsp_empty_body(self):
-        container = MagicMock()
-
-        app = _make_app(container=container)
-        self._register(app)
-
-        with app.test_client() as client:
-            resp = client.post("/ocsp", data=b"")
-        assert resp.status_code == 400
-
-    def test_get_ocsp_success(self):
-        container = MagicMock()
-        container.ocsp_service.handle_request.return_value = b"\x30\x03"
-
-        app = _make_app(container=container)
-        self._register(app)
-
-        encoded = base64.urlsafe_b64encode(b"\x30\x00").rstrip(b"=").decode()
-
-        with app.test_client() as client:
-            resp = client.get(f"/ocsp/{encoded}")
-        assert resp.status_code == 200
-        assert resp.headers["Content-Type"] == "application/ocsp-response"
-
-    def test_get_ocsp_not_enabled_no_attr(self):
-        container = MagicMock(spec=[])
-
-        app = _make_app(container=container)
-        self._register(app)
-
-        with app.test_client() as client:
-            resp = client.get("/ocsp/MAAA")
-        assert resp.status_code == 503
-
-    def test_get_ocsp_not_enabled_none(self):
-        container = MagicMock()
-        container.ocsp_service = None
-
-        app = _make_app(container=container)
-        self._register(app)
-
-        with app.test_client() as client:
-            resp = client.get("/ocsp/MAAA")
-        assert resp.status_code == 503
-
-    def test_get_ocsp_bad_base64(self):
-        container = MagicMock()
-
-        app = _make_app(container=container)
-        self._register(app)
-
-        # Python's urlsafe_b64decode is lenient; use patch to force error
-        with patch("acmeeh.api.ocsp.base64") as mock_b64:
-            mock_b64.urlsafe_b64decode.side_effect = Exception("decode error")
-            with app.test_client() as client:
-                resp = client.get("/ocsp/invalid_data")
-        assert resp.status_code == 400
 
 
 # =========================================================================

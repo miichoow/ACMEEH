@@ -84,7 +84,6 @@ def _make_internal_settings(**overrides) -> CAInternalSettings:
     defaults = {
         "root_cert_path": "/tmp/root.pem",
         "root_key_path": "/tmp/root.key",
-        "key_provider": "file",
         "chain_path": None,
         "serial_source": "random",
         "hash_algorithm": "sha256",
@@ -153,6 +152,7 @@ def _make_ca_settings(
         ),
         circuit_breaker_failure_threshold=5,
         circuit_breaker_recovery_timeout=30.0,
+        deferred_signing_timeout=600,
     )
 
 
@@ -331,13 +331,6 @@ class TestEnsureLoaded:
         cert_ref = backend._root_cert
         backend._ensure_loaded()
         assert backend._root_cert is cert_ref
-
-    def test_ensure_loaded_unsupported_key_provider(self) -> None:
-        internal = _make_internal_settings(key_provider="pkcs11")
-        ca_settings = _make_ca_settings(internal=internal)
-        backend = InternalCABackend(ca_settings)
-        with pytest.raises(CAError, match="Key provider 'pkcs11' is not yet supported"):
-            backend._ensure_loaded()
 
     def test_ensure_loaded_loads_chain(
         self,
@@ -713,13 +706,6 @@ class TestStartupCheck:
         backend = InternalCABackend(ca_settings)
         backend.startup_check()
         assert backend._root_cert is not None
-
-    def test_startup_check_raises_on_bad_config(self) -> None:
-        internal = _make_internal_settings(key_provider="unsupported")
-        ca_settings = _make_ca_settings(internal=internal)
-        backend = InternalCABackend(ca_settings)
-        with pytest.raises(CAError):
-            backend.startup_check()
 
 
 # ---------------------------------------------------------------------------
