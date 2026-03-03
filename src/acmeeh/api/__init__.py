@@ -84,15 +84,6 @@ def register_blueprints(app: Flask) -> None:
             url_prefix=base + settings.ari.path,
         )
 
-    # OCSP (optional)
-    if settings.ocsp.enabled:
-        from acmeeh.api.ocsp import ocsp_bp  # noqa: PLC0415
-
-        app.register_blueprint(
-            ocsp_bp,
-            url_prefix=base + settings.ocsp.path,
-        )
-
     # Register after-request hook for ACME headers on all routes
     app.after_request(add_acme_headers)
 

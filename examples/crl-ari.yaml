@@ -1,11 +1,9 @@
 _comment:
-- OCSP, CRL, and ARI (Renewal Information) enabled.
+- CRL and ARI (Renewal Information) enabled.
 - ''
 - '  - CRL:  Publishes a signed Certificate Revocation List at /crl,'
 - '          rebuilt periodically.  Requires the internal CA backend'
 - '          (needs access to the signing key).'
-- '  - OCSP: Online Certificate Status Protocol responder at /ocsp.'
-- '          Returns signed responses with configurable validity.'
 - '  - ARI:  ACME Renewal Information (draft-ietf-acme-ari) at'
 - '          /renewalInfo.  Tells clients when to renew based on'
 - '          a configurable percentage of certificate lifetime.'
@@ -34,11 +32,6 @@ crl:
   path: /crl
   rebuild_interval_seconds: 3600
   next_update_seconds: 86400
-  hash_algorithm: sha256
-ocsp:
-  enabled: true
-  path: /ocsp
-  response_validity_seconds: 86400
   hash_algorithm: sha256
 ari:
   enabled: true
