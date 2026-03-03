@@ -63,7 +63,6 @@ if TYPE_CHECKING:
     )
     from acmeeh.services.cleanup_worker import CleanupWorker
     from acmeeh.services.expiration_worker import ExpirationWorker
-    from acmeeh.services.ocsp import OCSPService
     from acmeeh.services.renewal_info import RenewalInfoService
     from acmeeh.services.workers import ChallengeWorker
 
@@ -270,12 +269,15 @@ class Container:
             allowlist_repo=self.admin_allowlist_repo,
             quota_settings=settings.quotas,
             rate_limiter=rate_limiter,
+            notifier=self.notification_service,
         )
         self.authorization_service: AuthorizationService = _AuS(
             self.authorizations,
             self.challenges,
             pre_authorization_lifetime_days=(settings.order.pre_authorization_lifetime_days),
             order_repo=self.orders,
+            enabled_challenge_types=settings.challenges.enabled,
+            notifier=self.notification_service,
         )
         self.challenge_service: ChallengeService = _ChS(
             self.challenges,
@@ -284,6 +286,7 @@ class Container:
             self.challenge_registry,
             hook_registry=self.hook_registry,
             challenge_settings=settings.challenges,
+            notifier=self.notification_service,
         )
 
         # Background challenge worker (optional)
@@ -334,9 +337,12 @@ class Container:
             db=db,
             min_csr_rsa_key_size=(settings.security.min_csr_rsa_key_size),
             min_csr_ec_key_size=(settings.security.min_csr_ec_key_size),
+            require_csr_profile=(settings.security.require_csr_profile),
+            db_pool_max_connections=settings.database.max_connections,
         )
         self.key_change_service: KeyChangeService = _KCS(
             self.accounts,
+            notifier=self.notification_service,
         )
 
         # ARI service (optional)
@@ -358,28 +364,16 @@ class Container:
 
             # Trigger loading of internal CA keys
             self.ca_backend.startup_check()
-            if hasattr(self.ca_backend, "root_cert") and self.ca_backend.root_cert:
+            # Access root_cert/root_key on the unwrapped backend — the
+            # CircuitBreakerCABackend wrapper does not expose these attrs.
+            if hasattr(_raw_ca, "root_cert") and _raw_ca.root_cert:
                 self.crl_manager = _CRL(
-                    self.ca_backend.root_cert,  # type: ignore[attr-defined]
-                    self.ca_backend.root_key,  # type: ignore[attr-defined]
+                    _raw_ca.root_cert,  # type: ignore[attr-defined]
+                    _raw_ca.root_key,  # type: ignore[attr-defined]
                     self.certificates,
                     settings.crl,
                     shutdown_coordinator=(shutdown_coordinator),
                     db=db,
-                )
-
-        # OCSP service (optional -- internal CA with OCSP)
-        self.ocsp_service: OCSPService | None = None
-        if settings.ocsp.enabled and settings.ca.backend == "internal":
-            from acmeeh.services.ocsp import OCSPService as _OCSP  # noqa: N814, PLC0415
-
-            self.ca_backend.startup_check()
-            if hasattr(self.ca_backend, "root_cert") and self.ca_backend.root_cert:
-                self.ocsp_service = _OCSP(
-                    self.certificates,
-                    self.ca_backend.root_cert,  # type: ignore[attr-defined]
-                    self.ca_backend.root_key,  # type: ignore[attr-defined]
-                    settings.ocsp,
                 )
 
         # Metrics collector (optional)
@@ -404,6 +398,7 @@ class Container:
             order_repo=self.orders,
             settings=settings,
             db=db,
+            notifier=self.notification_service,
         )
 
         # Expiration worker

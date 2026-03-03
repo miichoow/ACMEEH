@@ -119,6 +119,7 @@
           "default": 256
         },
         "hsts_max_age_seconds": { "$ref": "#/$defs/non_negative_integer", "default": 63072000 },
+        "require_csr_profile": { "type": "boolean", "default": false },
         "rate_limits": {
           "type": "object",
           "additionalProperties": false,
@@ -280,7 +281,6 @@
           "properties": {
             "root_cert_path":  { "type": "string", "default": "" },
             "root_key_path":   { "type": "string", "default": "" },
-            "key_provider":    { "type": "string", "enum": ["file", "pkcs11", "encrypted_file"], "default": "file" },
             "chain_path":      { "type": ["string", "null"], "default": null },
             "serial_source":   { "type": "string", "enum": ["database", "random"], "default": "database" },
             "hash_algorithm":  { "type": "string", "enum": ["sha256", "sha384", "sha512"], "default": "sha256" }
@@ -340,7 +340,8 @@
           }
         },
         "circuit_breaker_failure_threshold": { "type": "integer", "minimum": 1, "default": 5 },
-        "circuit_breaker_recovery_timeout":  { "type": "number", "minimum": 0.1, "default": 30.0 }
+        "circuit_breaker_recovery_timeout":  { "type": "number", "minimum": 0.1, "default": 30.0 },
+        "deferred_signing_timeout":          { "$ref": "#/$defs/positive_integer", "default": 600 }
       }
     },
 
@@ -384,6 +385,8 @@
         "password":       { "type": "string", "default": "" },
         "use_tls":        { "type": "boolean", "default": true },
         "from_address":   { "type": "string", "default": "" },
+        "cc":             { "type": "array", "items": { "type": "string" }, "default": [] },
+        "bcc":            { "type": "array", "items": { "type": "string" }, "default": [] },
         "templates_path": { "type": ["string", "null"], "default": null },
         "timeout_seconds": { "$ref": "#/$defs/positive_integer", "default": 30 }
       }
@@ -428,9 +431,10 @@
         "user":               { "type": "string", "minLength": 1 },
         "password":           { "type": "string", "default": "" },
         "sslmode":            { "type": "string", "enum": ["disable", "allow", "prefer", "require", "verify-ca", "verify-full"], "default": "prefer" },
-        "min_connections":    { "$ref": "#/$defs/positive_integer", "default": 2 },
-        "max_connections":    { "$ref": "#/$defs/positive_integer", "default": 10 },
-        "connection_timeout": { "type": "number", "exclusiveMinimum": 0, "default": 30.0 },
+        "min_connections":    { "$ref": "#/$defs/positive_integer", "default": 5 },
+        "max_connections":    { "$ref": "#/$defs/positive_integer", "default": 50 },
+        "connection_timeout": { "type": "number", "exclusiveMinimum": 0, "default": 10.0 },
+        "max_idle_seconds":   { "type": "number", "exclusiveMinimum": 0, "default": 300.0 },
         "auto_setup":         { "type": "boolean", "default": false }
       }
     },
@@ -451,7 +455,13 @@
         },
         "expiration_check_interval_seconds": { "$ref": "#/$defs/positive_integer", "default": 3600 },
         "retry_backoff_multiplier": { "type": "number", "minimum": 1.0, "maximum": 10.0, "default": 2.0 },
-        "retry_max_delay_seconds": { "$ref": "#/$defs/positive_integer", "default": 3600 }
+        "retry_max_delay_seconds": { "$ref": "#/$defs/positive_integer", "default": 3600 },
+        "disabled_types": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Notification types to suppress (e.g. challenge_failed, order_quota_exceeded)"
+        }
       }
     },
 
@@ -517,7 +527,8 @@
         "expiry_seconds":      { "$ref": "#/$defs/positive_integer", "default": 3600 },
         "gc_interval_seconds": { "$ref": "#/$defs/positive_integer", "default": 300 },
         "length":              { "type": "integer", "minimum": 16, "maximum": 128, "default": 32 },
-        "audit_consumed":      { "type": "boolean", "default": false }
+        "audit_consumed":      { "type": "boolean", "default": false },
+        "max_age_seconds":     { "$ref": "#/$defs/positive_integer", "default": 300 }
       }
     },
 
@@ -620,17 +631,6 @@
         "enabled":             { "type": "boolean", "default": false },
         "renewal_percentage":  { "type": "number", "minimum": 0.01, "maximum": 1.0, "default": 0.6667 },
         "path":                { "type": "string", "default": "/renewalInfo" }
-      }
-    },
-
-    "ocsp": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "enabled":                    { "type": "boolean", "default": false },
-        "path":                       { "type": "string", "default": "/ocsp" },
-        "response_validity_seconds":  { "$ref": "#/$defs/positive_integer", "default": 86400 },
-        "hash_algorithm":             { "type": "string", "enum": ["sha256", "sha384", "sha512"], "default": "sha256" }
       }
     },
 

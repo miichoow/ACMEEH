@@ -733,10 +733,10 @@ class HsmCABackend(CABackend):
         certificate_pem: str,  # noqa: ARG002
         reason: RevocationReason | None = None,
     ) -> None:
-        """Record revocation -- database-only, no CRL/OCSP action."""
+        """Record revocation -- database-only, no CRL action."""
         log.debug(
             "HSM CA backend: revocation recorded for serial=%s "
-            "(reason=%s) -- database-only, no CRL/OCSP action",
+            "(reason=%s) -- database-only, no CRL action",
             serial_number,
             reason.name if reason else "unspecified",
         )

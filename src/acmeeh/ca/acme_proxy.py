@@ -48,6 +48,7 @@ class AcmeProxyBackend(CABackend):
         self._client: Any = None
         self._handler: Any = None
         self._identifier_cls: Any = None
+        self._acmeow_revocation_reason: Any = None
         self._lock = threading.Lock()
 
     @property
@@ -60,6 +61,7 @@ class AcmeProxyBackend(CABackend):
 
         Create the storage directory, load the upstream challenge
         handler, and register an account with the upstream CA.
+        Subsequent calls are no-ops once the client is initialised.
 
         Raises
         ------
@@ -68,6 +70,9 @@ class AcmeProxyBackend(CABackend):
             or account registration fails.
 
         """
+        if self._client is not None:
+            return
+
         if not self._proxy.directory_url:
             msg = "ca.acme_proxy.directory_url is required"
             raise CAError(msg)
@@ -104,11 +109,13 @@ class AcmeProxyBackend(CABackend):
         # Initialise ACMEOW client
         try:
             from acmeow import AcmeClient, ChallengeType, Identifier  # noqa: PLC0415
+            from acmeow.enums import RevocationReason as AcmeowRevocationReason  # noqa: PLC0415
         except ImportError as exc:
             msg = "ACMEOW is not installed. Install with: pip install acmeow"
             raise CAError(msg) from exc
 
         self._identifier_cls = Identifier
+        self._acmeow_revocation_reason = AcmeowRevocationReason
         self._challenge_type = ChallengeType(self._proxy.challenge_type)
 
         try:
@@ -141,6 +148,9 @@ class AcmeProxyBackend(CABackend):
             client_kwargs["proxy_url"] = self._proxy.proxy_url
         if not self._proxy.verify_ssl:
             client_kwargs["verify_ssl"] = False  # noqa: FBT003
+            import urllib3  # noqa: PLC0415
+
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
         self._client = acme_client_cls(**client_kwargs)
 
@@ -357,8 +367,8 @@ class AcmeProxyBackend(CABackend):
         cert = load_pem_x509_certificate(certificate_pem.encode())
         cert_der = cert.public_bytes(Encoding.DER)
 
-        reason_code = reason.value if reason is not None else 0
-        self._client.revoke_certificate(cert_der, reason=reason_code)
+        acmeow_reason = self._acmeow_revocation_reason(reason.value) if reason is not None else None
+        self._client.revoke_certificate(cert_der, reason=acmeow_reason)
         log.info(
             "ACME proxy: revoked certificate %s upstream",
             serial_number,

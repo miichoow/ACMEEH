@@ -324,6 +324,13 @@ class AcmeehConfig(ConfigKit):
 
         # -- EAB --
         acme_cfg = self.data.get("acme") or {}
+        admin_api_cfg = self.data.get("admin_api") or {}
+        if acme_cfg.get("eab_required") and not admin_api_cfg.get("enabled"):
+            errors.append(
+                "acme.eab_required is true but admin_api.enabled is false — "
+                "EAB credentials are managed via the admin API and cannot "
+                "be verified without it",
+            )
         if acme_cfg.get("eab_reusable") and not acme_cfg.get("eab_required"):
             warnings.append(
                 "acme.eab_reusable is true but acme.eab_required is false — "
@@ -358,8 +365,8 @@ class AcmeehConfig(ConfigKit):
 
         # -- Database --
         db = self.data.get("database") or {}
-        min_conn = db.get("min_connections", 2)
-        max_conn = db.get("max_connections", 10)
+        min_conn = db.get("min_connections", 5)
+        max_conn = db.get("max_connections", 50)
         if min_conn > max_conn:
             errors.append(
                 f"database.min_connections ({min_conn}) must be <= "
@@ -368,6 +375,13 @@ class AcmeehConfig(ConfigKit):
 
         # -- Warnings (logged, not fatal) --
         workers = server.get("workers", 4)
+        worker_class = server.get("worker_class", "sync")
+        if worker_class == "gthread":
+            warnings.append(
+                "server.worker_class='gthread' — ensure database.max_connections "
+                "accounts for gunicorn's threads-per-worker setting "
+                "(recommended: workers × threads + 5)",
+            )
         if proxy.get("enabled") and not proxy.get("trusted_proxies"):
             errors.append(
                 "proxy.enabled is true but proxy.trusted_proxies is empty — "
@@ -386,6 +400,17 @@ class AcmeehConfig(ConfigKit):
                 "notifications.enabled is true but smtp.enabled is false — "
                 "notifications will be recorded but not sent",
             )
+        disabled_types = notifications.get("disabled_types", [])
+        if disabled_types:
+            from acmeeh.core.types import NotificationType  # noqa: PLC0415
+
+            valid_values = {e.value for e in NotificationType}
+            unknown = [t for t in disabled_types if t not in valid_values]
+            if unknown:
+                warnings.append(
+                    f"notifications.disabled_types contains unknown type(s): "
+                    f"{', '.join(unknown)} — valid values: {sorted(valid_values)}",
+                )
         if email.get("validate_mx") and not dns_cfg.get("resolvers"):
             warnings.append(
                 "email.validate_mx is true but dns.resolvers is empty — "
@@ -475,14 +500,6 @@ class AcmeehConfig(ConfigKit):
             )
 
         # -- Database connection pool vs workers --
-        database = self.data.get("database") or {}
-        max_conn = database.get("max_connections", 10)
-        min_conn = database.get("min_connections", 2)
-        if min_conn > max_conn:
-            errors.append(
-                f"database.min_connections ({min_conn}) must be <= "
-                f"database.max_connections ({max_conn})",
-            )
         recommended_min = workers * 2 + 5
         if max_conn < recommended_min:
             warnings.append(
@@ -506,6 +523,12 @@ class AcmeehConfig(ConfigKit):
             warnings.append(
                 "security.identifier_policy.enforce_account_allowlist is true "
                 "but admin_api.enabled is false — allowlist cannot be managed",
+            )
+
+        if security.get("require_csr_profile") and not admin_api_data.get("enabled"):
+            warnings.append(
+                "security.require_csr_profile is true "
+                "but admin_api.enabled is false — CSR profiles cannot be managed",
             )
 
         # -- Admin API --

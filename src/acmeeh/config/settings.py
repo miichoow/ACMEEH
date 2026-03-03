@@ -189,6 +189,7 @@ class SecuritySettings:
     min_csr_rsa_key_size: int
     min_csr_ec_key_size: int
     hsts_max_age_seconds: int
+    require_csr_profile: bool
 
 
 def _build_security(data: dict | None) -> SecuritySettings:
@@ -217,6 +218,7 @@ def _build_security(data: dict | None) -> SecuritySettings:
         min_csr_rsa_key_size=d.get("min_csr_rsa_key_size", 2048),
         min_csr_ec_key_size=d.get("min_csr_ec_key_size", 256),
         hsts_max_age_seconds=d.get("hsts_max_age_seconds", 63072000),
+        require_csr_profile=d.get("require_csr_profile", False),
     )
 
 
@@ -434,7 +436,6 @@ class CAInternalSettings:
 
     root_cert_path: str
     root_key_path: str
-    key_provider: str
     chain_path: str | None
     serial_source: str
     hash_algorithm: str
@@ -507,6 +508,7 @@ class CASettings:
     hsm: HsmSettings
     circuit_breaker_failure_threshold: int
     circuit_breaker_recovery_timeout: float
+    deferred_signing_timeout: int
 
 
 _DEFAULT_PROFILE = CAProfileSettings(
@@ -544,7 +546,6 @@ def _build_ca(data: dict | None) -> CASettings:
         internal=CAInternalSettings(
             root_cert_path=int_d.get("root_cert_path", ""),
             root_key_path=int_d.get("root_key_path", ""),
-            key_provider=int_d.get("key_provider", "file"),
             chain_path=int_d.get("chain_path"),
             serial_source=int_d.get("serial_source", "database"),
             hash_algorithm=int_d.get("hash_algorithm", "sha256"),
@@ -594,6 +595,7 @@ def _build_ca(data: dict | None) -> CASettings:
         circuit_breaker_recovery_timeout=float(
             d.get("circuit_breaker_recovery_timeout", 30),
         ),
+        deferred_signing_timeout=d.get("deferred_signing_timeout", 600),
     )
 
 
@@ -680,6 +682,8 @@ class SmtpSettings:
     password: str
     use_tls: bool
     from_address: str
+    cc: tuple[str, ...]
+    bcc: tuple[str, ...]
     templates_path: str | None
     timeout_seconds: int
 
@@ -694,6 +698,8 @@ def _build_smtp(data: dict | None) -> SmtpSettings:
         password=d.get("password", ""),
         use_tls=d.get("use_tls", True),
         from_address=d.get("from_address", ""),
+        cc=tuple(d.get("cc", [])),
+        bcc=tuple(d.get("bcc", [])),
         templates_path=d.get("templates_path"),
         timeout_seconds=d.get("timeout_seconds", 30),
     )
@@ -759,6 +765,7 @@ class DatabaseSettings:
     max_connections: int
     connection_timeout: float
     auto_setup: bool
+    max_idle_seconds: float
 
 
 def _build_database(data: dict | None) -> DatabaseSettings:
@@ -770,10 +777,11 @@ def _build_database(data: dict | None) -> DatabaseSettings:
         user=d["user"],
         password=d.get("password", ""),
         sslmode=d.get("sslmode", "prefer"),
-        min_connections=d.get("min_connections", 2),
-        max_connections=d.get("max_connections", 10),
-        connection_timeout=d.get("connection_timeout", 30.0),
+        min_connections=d.get("min_connections", 5),
+        max_connections=d.get("max_connections", 50),
+        connection_timeout=d.get("connection_timeout", 10.0),
         auto_setup=d.get("auto_setup", False),
+        max_idle_seconds=float(d.get("max_idle_seconds", 300)),
     )
 
 
@@ -795,6 +803,7 @@ class NotificationSettings:
     expiration_check_interval_seconds: int
     retry_backoff_multiplier: float
     retry_max_delay_seconds: int
+    disabled_types: tuple[str, ...]
 
 
 def _build_notifications(data: dict | None) -> NotificationSettings:
@@ -811,6 +820,7 @@ def _build_notifications(data: dict | None) -> NotificationSettings:
         expiration_check_interval_seconds=d.get("expiration_check_interval_seconds", 3600),
         retry_backoff_multiplier=d.get("retry_backoff_multiplier", 2.0),
         retry_max_delay_seconds=d.get("retry_max_delay_seconds", 3600),
+        disabled_types=tuple(d.get("disabled_types", [])),
     )
 
 
@@ -1129,29 +1139,6 @@ def _build_ari(data: dict | None) -> AriSettings:
 
 
 # ---------------------------------------------------------------------------
-# OCSP
-# ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class OcspSettings:
-    enabled: bool
-    path: str
-    response_validity_seconds: int
-    hash_algorithm: str
-
-
-def _build_ocsp(data: dict | None) -> OcspSettings:
-    d = data or {}
-    return OcspSettings(
-        enabled=d.get("enabled", False),
-        path=d.get("path", "/ocsp"),
-        response_validity_seconds=d.get("response_validity_seconds", 86400),
-        hash_algorithm=d.get("hash_algorithm", "sha256"),
-    )
-
-
-# ---------------------------------------------------------------------------
 # Audit Export
 # ---------------------------------------------------------------------------
 
@@ -1233,7 +1220,6 @@ class AcmeehSettings:
     ct_logging: CtLoggingSettings
     audit_retention: AuditRetentionSettings
     ari: AriSettings
-    ocsp: OcspSettings
     audit_export: AuditExportSettings
     retention: RetentionSettings
 
@@ -1270,7 +1256,6 @@ def build_settings(data: dict) -> AcmeehSettings:
         ct_logging=_build_ct_logging(data.get("ct_logging")),
         audit_retention=_build_audit_retention(data.get("audit_retention")),
         ari=_build_ari(data.get("ari")),
-        ocsp=_build_ocsp(data.get("ocsp")),
         audit_export=_build_audit_export(data.get("audit_export")),
         retention=_build_retention(data.get("retention")),
     )

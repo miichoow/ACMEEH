@@ -87,12 +87,6 @@ class InternalCABackend(CABackend):
             return
 
         internal = self._settings.internal  # noqa: SLF001
-        if internal.key_provider != "file":
-            msg = (
-                f"Key provider '{internal.key_provider}' is not yet "
-                f"supported; only 'file' is currently implemented"
-            )
-            raise CAError(msg)
 
         # Load root certificate
         self._load_root_cert(internal.root_cert_path)
@@ -649,7 +643,7 @@ class InternalCABackend(CABackend):
     ) -> None:
         """Record revocation for internal CA (no-op).
 
-        CRL/OCSP generation is a separate concern and not handled here.
+        CRL generation is a separate concern and not handled here.
 
         Parameters
         ----------
@@ -663,7 +657,7 @@ class InternalCABackend(CABackend):
         """
         log.debug(
             "Internal CA backend: revocation recorded for serial=%s "
-            "(reason=%s) -- database-only, no CRL/OCSP action",
+            "(reason=%s) -- database-only, no CRL action",
             serial_number,
             reason.name if reason else "unspecified",
         )
