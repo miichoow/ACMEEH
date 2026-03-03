@@ -11,6 +11,25 @@ CSR profiles, certificate operations, notification management, CRL rebuilds, and
 maintenance mode.
 
 
+Admin Client
+------------
+
+``acmeeh-admin`` is the official Python client library and CLI for interacting with
+the Admin API. Install it from `PyPI <https://pypi.org/project/acmeeh-admin/>`_:
+
+.. code-block:: bash
+
+   pip install acmeeh-admin
+
+The package provides:
+
+- **Python library** --- programmatic access via ``AcmeehAdminClient`` for automation and scripting.
+- **CLI** --- the ``acmeeh-admin`` command-line tool for operators (user management, audit export, certificate search, EAB provisioning, maintenance mode, and more).
+
+For full documentation and source code, see the
+`acmeeh-admin repository <https://github.com/miichoow/ACMEEH-admin>`_.
+
+
 Enabling the Admin API
 ----------------------
 

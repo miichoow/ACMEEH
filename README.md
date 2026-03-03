@@ -15,7 +15,8 @@
 [Documentation](https://miichoow.github.io/ACMEEH/) |
 [PyPI](https://pypi.org/project/acmeeh/) |
 [Docker Hub](https://hub.docker.com/r/miichoow/acmeeh) |
-[GitHub](https://github.com/miichoow/ACMEEH)
+[GitHub](https://github.com/miichoow/ACMEEH) |
+[Admin Client](https://github.com/miichoow/ACMEEH-admin)
 
 ---
 
@@ -32,7 +33,7 @@ Built with Python 3.12+, Flask, PostgreSQL, and gunicorn.
 - **Pluggable CA Backends** — Internal file-based CA, external HTTP API (Vault, EJBCA), PKCS#11 HSM, ACME proxy to upstream CA, or bring your own with `ext:` plugins. All backends include a circuit breaker for resilience.
 - **Challenge Validation** — HTTP-01, DNS-01, and TLS-ALPN-01 with configurable timeouts, retries, and background validation workers.
 - **Revocation Infrastructure** — Built-in CRL generation and ACME Renewal Information (ARI) — each independently toggleable.
-- **Admin REST API** — Token-authenticated API for user management, audit logs, EAB credentials, identifier allowlists, CSR profiles, certificate search, bulk revocation, and maintenance mode.
+- **Admin REST API** — Token-authenticated API for user management, audit logs, EAB credentials, identifier allowlists, CSR profiles, certificate search, bulk revocation, and maintenance mode. See [`acmeeh-admin`](https://github.com/miichoow/ACMEEH-admin) for the official Python client and CLI.
 - **Hook System** — 10 lifecycle events (account registration, order creation, challenge validation, certificate issuance/revocation/delivery, CT submission) with pluggable handlers.
 - **Security Controls** — Per-endpoint rate limiting, key size and algorithm policies, identifier allowlists, External Account Binding (EAB), CAA enforcement (RFC 8659), CSR validation profiles, and per-account quotas.
 - **Prometheus Metrics** — `/metrics` endpoint for certificate counts, issuance rates, challenge stats, and CA backend health.
