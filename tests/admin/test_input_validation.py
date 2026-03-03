@@ -49,7 +49,9 @@ class StubAdminUserService:
                 return u, "stub-token"
         raise AcmeProblem("urn:acmeeh:admin:error:unauthorized", "Bad creds", 401)
 
-    def create_user(self, username, email, role=AdminRole.AUDITOR, *, actor_id=None, ip_address=None):
+    def create_user(
+        self, username, email, role=AdminRole.AUDITOR, *, actor_id=None, ip_address=None
+    ):
         user = self.add_user(username=username, email=email, role=role)
         return user, "generated-password-123"
 
@@ -84,6 +86,7 @@ class StubAdminUserService:
 
     def create_eab(self, kid, *, label="", actor_id=None, ip_address=None):
         from acmeeh.admin.models import EabCredential
+
         cred = EabCredential(id=uuid4(), kid=kid, hmac_key="key", label=label)
         self._eab_creds[cred.id] = cred
         return cred
@@ -93,21 +96,30 @@ class StubAdminUserService:
 
     def create_allowed_identifier(self, id_type, id_value, *, actor_id=None, ip_address=None):
         from acmeeh.admin.models import AllowedIdentifier
+
         return AllowedIdentifier(id=uuid4(), identifier_type=id_type, identifier_value=id_value)
 
     def list_allowed_identifiers(self):
         return []
 
-    def create_csr_profile(self, name, profile_data, *, description="", actor_id=None, ip_address=None):
+    def create_csr_profile(
+        self, name, profile_data, *, description="", actor_id=None, ip_address=None
+    ):
         from acmeeh.admin.models import CsrProfile
+
         return CsrProfile(id=uuid4(), name=name, profile_data=profile_data, description=description)
 
     def list_csr_profiles(self):
         return []
 
-    def update_csr_profile(self, profile_id, name, profile_data, *, description="", actor_id=None, ip_address=None):
+    def update_csr_profile(
+        self, profile_id, name, profile_data, *, description="", actor_id=None, ip_address=None
+    ):
         from acmeeh.admin.models import CsrProfile
-        return CsrProfile(id=profile_id, name=name, profile_data=profile_data, description=description)
+
+        return CsrProfile(
+            id=profile_id, name=name, profile_data=profile_data, description=description
+        )
 
     def list_notifications(self, status, limit, offset):
         return []

@@ -28,6 +28,7 @@ from acmeeh.core.types import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _utcnow():
     return datetime.now(UTC)
 
@@ -37,6 +38,7 @@ def _uuid():
 
 
 # -- shared row templates --
+
 
 def _cert_row(**overrides):
     base = {
@@ -171,10 +173,11 @@ def _nonce_row(**overrides):
 # CertificateRepository
 # ======================================================================
 
-class TestCertificateRepository:
 
+class TestCertificateRepository:
     def _make_repo(self, mock_db):
         from acmeeh.repositories.certificate import CertificateRepository
+
         return CertificateRepository(mock_db)
 
     def test_row_to_entity(self):
@@ -196,15 +199,22 @@ class TestCertificateRepository:
         mock_db = MagicMock()
         repo = self._make_repo(mock_db)
         from acmeeh.models.certificate import Certificate
+
         cert = Certificate(
-            id=_uuid(), account_id=_uuid(), order_id=_uuid(),
-            serial_number="AA01", fingerprint="fp",
-            pem_chain="pem", not_before_cert=_utcnow(),
-            not_after_cert=_utcnow(), revoked_at=_utcnow(),
+            id=_uuid(),
+            account_id=_uuid(),
+            order_id=_uuid(),
+            serial_number="AA01",
+            fingerprint="fp",
+            pem_chain="pem",
+            not_before_cert=_utcnow(),
+            not_after_cert=_utcnow(),
+            revoked_at=_utcnow(),
             revocation_reason=RevocationReason.KEY_COMPROMISE,
             public_key_fingerprint="pk_fp",
             san_values=["example.com"],
-            created_at=_utcnow(), updated_at=_utcnow(),
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         row = repo._entity_to_row(cert)
         assert row["revocation_reason"] == RevocationReason.KEY_COMPROMISE.value
@@ -215,15 +225,22 @@ class TestCertificateRepository:
         mock_db = MagicMock()
         repo = self._make_repo(mock_db)
         from acmeeh.models.certificate import Certificate
+
         cert = Certificate(
-            id=_uuid(), account_id=_uuid(), order_id=_uuid(),
-            serial_number="AA01", fingerprint="fp",
-            pem_chain="pem", not_before_cert=_utcnow(),
-            not_after_cert=_utcnow(), revoked_at=None,
+            id=_uuid(),
+            account_id=_uuid(),
+            order_id=_uuid(),
+            serial_number="AA01",
+            fingerprint="fp",
+            pem_chain="pem",
+            not_before_cert=_utcnow(),
+            not_after_cert=_utcnow(),
+            revoked_at=None,
             revocation_reason=None,
             public_key_fingerprint=None,
             san_values=None,
-            created_at=_utcnow(), updated_at=_utcnow(),
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         row = repo._entity_to_row(cert)
         assert row["revocation_reason"] is None
@@ -372,15 +389,17 @@ class TestCertificateRepository:
         db.fetch_all.return_value = [row]
         repo = self._make_repo(db)
         aid = _uuid()
-        result = repo.search({
-            "account_id": aid,
-            "serial": "AA",
-            "fingerprint": "fp",
-            "status": "revoked",
-            "serial_numbers": ["AA", "BB"],
-            "domain": "example.com",
-            "expiring_before": _utcnow(),
-        })
+        result = repo.search(
+            {
+                "account_id": aid,
+                "serial": "AA",
+                "fingerprint": "fp",
+                "status": "revoked",
+                "serial_numbers": ["AA", "BB"],
+                "domain": "example.com",
+                "expiring_before": _utcnow(),
+            }
+        )
         assert len(result) == 1
 
     @patch("acmeeh.repositories.certificate.Database")
@@ -425,10 +444,11 @@ class TestCertificateRepository:
 # ChallengeRepository
 # ======================================================================
 
-class TestChallengeRepository:
 
+class TestChallengeRepository:
     def _make_repo(self, mock_db):
         from acmeeh.repositories.challenge import ChallengeRepository
+
         return ChallengeRepository(mock_db)
 
     def test_row_to_entity(self):
@@ -441,13 +461,21 @@ class TestChallengeRepository:
     def test_entity_to_row(self):
         repo = self._make_repo(MagicMock())
         from acmeeh.models.challenge import Challenge
+
         ch = Challenge(
-            id=_uuid(), authorization_id=_uuid(),
-            type=ChallengeType.DNS_01, token="tok",
-            status=ChallengeStatus.VALID, error={"detail": "err"},
-            validated_at=_utcnow(), retry_count=2,
-            next_retry_at=None, locked_by="w1", locked_at=_utcnow(),
-            created_at=_utcnow(), updated_at=_utcnow(),
+            id=_uuid(),
+            authorization_id=_uuid(),
+            type=ChallengeType.DNS_01,
+            token="tok",
+            status=ChallengeStatus.VALID,
+            error={"detail": "err"},
+            validated_at=_utcnow(),
+            retry_count=2,
+            next_retry_at=None,
+            locked_by="w1",
+            locked_at=_utcnow(),
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         row = repo._entity_to_row(ch)
         assert row["type"] == ChallengeType.DNS_01.value
@@ -456,13 +484,21 @@ class TestChallengeRepository:
     def test_entity_to_row_no_error(self):
         repo = self._make_repo(MagicMock())
         from acmeeh.models.challenge import Challenge
+
         ch = Challenge(
-            id=_uuid(), authorization_id=_uuid(),
-            type=ChallengeType.HTTP_01, token="tok",
-            status=ChallengeStatus.PENDING, error=None,
-            validated_at=None, retry_count=0,
-            next_retry_at=None, locked_by=None, locked_at=None,
-            created_at=_utcnow(), updated_at=_utcnow(),
+            id=_uuid(),
+            authorization_id=_uuid(),
+            type=ChallengeType.HTTP_01,
+            token="tok",
+            status=ChallengeStatus.PENDING,
+            error=None,
+            validated_at=None,
+            retry_count=0,
+            next_retry_at=None,
+            locked_by=None,
+            locked_at=None,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         row = repo._entity_to_row(ch)
         assert row["error"] is None
@@ -478,13 +514,21 @@ class TestChallengeRepository:
         db = MockDB.get_instance.return_value
         repo = self._make_repo(db)
         from acmeeh.models.challenge import Challenge
+
         ch = Challenge(
-            id=_uuid(), authorization_id=_uuid(),
-            type=ChallengeType.HTTP_01, token="tok",
-            status=ChallengeStatus.PENDING, error=None,
-            validated_at=None, retry_count=0,
-            next_retry_at=None, locked_by=None, locked_at=None,
-            created_at=_utcnow(), updated_at=_utcnow(),
+            id=_uuid(),
+            authorization_id=_uuid(),
+            type=ChallengeType.HTTP_01,
+            token="tok",
+            status=ChallengeStatus.PENDING,
+            error=None,
+            validated_at=None,
+            retry_count=0,
+            next_retry_at=None,
+            locked_by=None,
+            locked_at=None,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         repo.create_many([ch])
         db.execute.assert_called_once()
@@ -650,10 +694,11 @@ class TestChallengeRepository:
 # OrderRepository
 # ======================================================================
 
-class TestOrderRepository:
 
+class TestOrderRepository:
     def _make_repo(self, mock_db):
         from acmeeh.repositories.order import OrderRepository
+
         return OrderRepository(mock_db)
 
     def test_row_to_entity(self):
@@ -667,12 +712,20 @@ class TestOrderRepository:
     def test_entity_to_row(self):
         repo = self._make_repo(MagicMock())
         from acmeeh.models.order import Identifier, Order
+
         order = Order(
-            id=_uuid(), account_id=_uuid(), status=OrderStatus.READY,
+            id=_uuid(),
+            account_id=_uuid(),
+            status=OrderStatus.READY,
             identifiers=(Identifier(type=IdentifierType.DNS, value="example.com"),),
-            identifiers_hash="h", expires=_utcnow(), not_before=None,
-            not_after=None, error={"detail": "err"}, certificate_id=None,
-            created_at=_utcnow(), updated_at=_utcnow(),
+            identifiers_hash="h",
+            expires=_utcnow(),
+            not_before=None,
+            not_after=None,
+            error={"detail": "err"},
+            certificate_id=None,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         row = repo._entity_to_row(order)
         assert row["status"] == OrderStatus.READY.value
@@ -680,12 +733,20 @@ class TestOrderRepository:
     def test_entity_to_row_no_error(self):
         repo = self._make_repo(MagicMock())
         from acmeeh.models.order import Identifier, Order
+
         order = Order(
-            id=_uuid(), account_id=_uuid(), status=OrderStatus.PENDING,
+            id=_uuid(),
+            account_id=_uuid(),
+            status=OrderStatus.PENDING,
             identifiers=(Identifier(type=IdentifierType.DNS, value="example.com"),),
-            identifiers_hash="h", expires=None, not_before=None,
-            not_after=None, error=None, certificate_id=None,
-            created_at=_utcnow(), updated_at=_utcnow(),
+            identifiers_hash="h",
+            expires=None,
+            not_before=None,
+            not_after=None,
+            error=None,
+            certificate_id=None,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         row = repo._entity_to_row(order)
         assert row["error"] is None
@@ -704,7 +765,9 @@ class TestOrderRepository:
         acct_id = _uuid()
         repo.find_by = MagicMock(return_value=[])
         repo.find_by_account(acct_id, status=OrderStatus.VALID)
-        repo.find_by.assert_called_once_with({"account_id": acct_id, "status": OrderStatus.VALID.value})
+        repo.find_by.assert_called_once_with(
+            {"account_id": acct_id, "status": OrderStatus.VALID.value}
+        )
 
     @patch("acmeeh.repositories.order.Database")
     def test_find_by_account_paginated_no_cursor(self, MockDB):
@@ -810,8 +873,11 @@ class TestOrderRepository:
         db.fetch_one.return_value = row
         repo = self._make_repo(db)
         result = repo.transition_status(
-            _uuid(), OrderStatus.PROCESSING, OrderStatus.VALID,
-            error={"detail": "err"}, certificate_id=_uuid(),
+            _uuid(),
+            OrderStatus.PROCESSING,
+            OrderStatus.VALID,
+            error={"detail": "err"},
+            certificate_id=_uuid(),
         )
         assert result is not None
 
@@ -830,7 +896,10 @@ class TestOrderRepository:
         conn.fetch_one.return_value = row
         repo = self._make_repo(MagicMock())
         result = repo.transition_status(
-            _uuid(), OrderStatus.PENDING, OrderStatus.READY, conn=conn,
+            _uuid(),
+            OrderStatus.PENDING,
+            OrderStatus.READY,
+            conn=conn,
         )
         assert result is not None
 
@@ -878,10 +947,11 @@ class TestOrderRepository:
 # AuthorizationRepository
 # ======================================================================
 
-class TestAuthorizationRepository:
 
+class TestAuthorizationRepository:
     def _make_repo(self, mock_db):
         from acmeeh.repositories.authorization import AuthorizationRepository
+
         return AuthorizationRepository(mock_db)
 
     def test_row_to_entity(self):
@@ -894,11 +964,17 @@ class TestAuthorizationRepository:
     def test_entity_to_row(self):
         repo = self._make_repo(MagicMock())
         from acmeeh.models.authorization import Authorization
+
         authz = Authorization(
-            id=_uuid(), account_id=_uuid(),
-            identifier_type=IdentifierType.IP, identifier_value="1.2.3.4",
-            status=AuthorizationStatus.VALID, expires=_utcnow(),
-            wildcard=True, created_at=_utcnow(), updated_at=_utcnow(),
+            id=_uuid(),
+            account_id=_uuid(),
+            identifier_type=IdentifierType.IP,
+            identifier_value="1.2.3.4",
+            status=AuthorizationStatus.VALID,
+            expires=_utcnow(),
+            wildcard=True,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         row = repo._entity_to_row(authz)
         assert row["identifier_type"] == IdentifierType.IP.value
@@ -964,7 +1040,9 @@ class TestAuthorizationRepository:
         row = _authz_row(status=AuthorizationStatus.VALID.value)
         db.fetch_one.return_value = row
         repo = self._make_repo(db)
-        result = repo.transition_status(_uuid(), AuthorizationStatus.PENDING, AuthorizationStatus.VALID)
+        result = repo.transition_status(
+            _uuid(), AuthorizationStatus.PENDING, AuthorizationStatus.VALID
+        )
         assert result is not None
 
     @patch("acmeeh.repositories.authorization.Database")
@@ -972,7 +1050,9 @@ class TestAuthorizationRepository:
         db = MockDB.get_instance.return_value
         db.fetch_one.return_value = None
         repo = self._make_repo(db)
-        result = repo.transition_status(_uuid(), AuthorizationStatus.PENDING, AuthorizationStatus.VALID)
+        result = repo.transition_status(
+            _uuid(), AuthorizationStatus.PENDING, AuthorizationStatus.VALID
+        )
         assert result is None
 
     @patch("acmeeh.repositories.authorization.Database")
@@ -1011,10 +1091,11 @@ class TestAuthorizationRepository:
 # NotificationRepository
 # ======================================================================
 
-class TestNotificationRepository:
 
+class TestNotificationRepository:
     def _make_repo(self, mock_db):
         from acmeeh.repositories.notification import NotificationRepository
+
         return NotificationRepository(mock_db)
 
     def test_row_to_entity(self):
@@ -1026,12 +1107,19 @@ class TestNotificationRepository:
     def test_entity_to_row(self):
         repo = self._make_repo(MagicMock())
         from acmeeh.models.notification import Notification
+
         notif = Notification(
-            id=_uuid(), notification_type=NotificationType.EXPIRATION_WARNING,
-            recipient="admin@test.com", subject="sub", body="bod",
-            status=NotificationStatus.PENDING, account_id=_uuid(),
-            error_detail=None, retry_count=0,
-            created_at=_utcnow(), sent_at=None,
+            id=_uuid(),
+            notification_type=NotificationType.EXPIRATION_WARNING,
+            recipient="admin@test.com",
+            subject="sub",
+            body="bod",
+            status=NotificationStatus.PENDING,
+            account_id=_uuid(),
+            error_detail=None,
+            retry_count=0,
+            created_at=_utcnow(),
+            sent_at=None,
         )
         row = repo._entity_to_row(notif)
         assert row["notification_type"] == NotificationType.EXPIRATION_WARNING.value
@@ -1065,7 +1153,9 @@ class TestNotificationRepository:
     @patch("acmeeh.repositories.notification.Database")
     def test_mark_failed(self, MockDB):
         db = MockDB.get_instance.return_value
-        row = _notification_row(status=NotificationStatus.FAILED.value, error_detail="smtp err", retry_count=2)
+        row = _notification_row(
+            status=NotificationStatus.FAILED.value, error_detail="smtp err", retry_count=2
+        )
         db.fetch_one.return_value = row
         repo = self._make_repo(db)
         result = repo.mark_failed(_uuid(), "smtp err")
@@ -1132,10 +1222,11 @@ class TestNotificationRepository:
 # AccountRepository & AccountContactRepository
 # ======================================================================
 
-class TestAccountRepository:
 
+class TestAccountRepository:
     def _make_repo(self, mock_db):
         from acmeeh.repositories.account import AccountRepository
+
         return AccountRepository(mock_db)
 
     def test_row_to_entity(self):
@@ -1147,10 +1238,15 @@ class TestAccountRepository:
     def test_entity_to_row(self):
         repo = self._make_repo(MagicMock())
         from acmeeh.models.account import Account
+
         acct = Account(
-            id=_uuid(), jwk_thumbprint="tp", jwk={"kty": "EC"},
-            status=AccountStatus.VALID, tos_agreed=True,
-            created_at=_utcnow(), updated_at=_utcnow(),
+            id=_uuid(),
+            jwk_thumbprint="tp",
+            jwk={"kty": "EC"},
+            status=AccountStatus.VALID,
+            tos_agreed=True,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         row = repo._entity_to_row(acct)
         assert row["status"] == AccountStatus.VALID.value
@@ -1198,9 +1294,9 @@ class TestAccountRepository:
 
 
 class TestAccountContactRepository:
-
     def _make_repo(self, mock_db):
         from acmeeh.repositories.account import AccountContactRepository
+
         return AccountContactRepository(mock_db)
 
     def test_row_to_entity(self):
@@ -1212,8 +1308,10 @@ class TestAccountContactRepository:
     def test_entity_to_row(self):
         repo = self._make_repo(MagicMock())
         from acmeeh.models.account import AccountContact
+
         contact = AccountContact(
-            id=_uuid(), account_id=_uuid(),
+            id=_uuid(),
+            account_id=_uuid(),
             contact_uri="mailto:test@example.com",
             created_at=_utcnow(),
         )
@@ -1244,8 +1342,10 @@ class TestAccountContactRepository:
 
         repo = self._make_repo(db)
         from acmeeh.models.account import AccountContact
+
         contact = AccountContact(
-            id=_uuid(), account_id=_uuid(),
+            id=_uuid(),
+            account_id=_uuid(),
             contact_uri="mailto:test@example.com",
             created_at=_utcnow(),
         )
@@ -1265,10 +1365,11 @@ class TestAccountContactRepository:
 # NonceRepository
 # ======================================================================
 
-class TestNonceRepository:
 
+class TestNonceRepository:
     def _make_repo(self, mock_db, audit=False):
         from acmeeh.repositories.nonce import NonceRepository
+
         return NonceRepository(mock_db, audit_consumed=audit)
 
     def test_row_to_entity(self):
@@ -1280,6 +1381,7 @@ class TestNonceRepository:
     def test_entity_to_row(self):
         repo = self._make_repo(MagicMock())
         from acmeeh.models.nonce import Nonce
+
         nonce = Nonce(nonce="n1", expires_at=_utcnow(), created_at=_utcnow())
         row = repo._entity_to_row(nonce)
         assert row["nonce"] == "n1"
@@ -1318,6 +1420,7 @@ class TestNonceRepository:
         db.execute.return_value = 2
         repo = self._make_repo(db)
         from acmeeh.models.nonce import Nonce
+
         nonces = [
             Nonce(nonce="n1", expires_at=_utcnow(), created_at=_utcnow()),
             Nonce(nonce="n2", expires_at=_utcnow(), created_at=_utcnow()),

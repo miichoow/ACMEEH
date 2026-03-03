@@ -127,7 +127,9 @@ def create_app(  # noqa: C901, PLR0915
         # pools, 10%/20% keeps the thresholds reasonable.
         _pool_max = 50
         try:
-            _startup_stats = _raw_pool.get_stats() if _raw_pool and hasattr(_raw_pool, "get_stats") else {}
+            _startup_stats = (
+                _raw_pool.get_stats() if _raw_pool and hasattr(_raw_pool, "get_stats") else {}
+            )
             _pool_max = int(_startup_stats.get("pool_max", 50) or 50)
         except (TypeError, ValueError, Exception):
             _pool_max = 50
@@ -135,8 +137,8 @@ def create_app(  # noqa: C901, PLR0915
             _critical_threshold = max(1, _pool_max * 3 // 10)  # 30%
             _pressure_threshold = max(2, _pool_max * 5 // 10)  # 50%
         else:
-            _critical_threshold = max(2, _pool_max // 10)       # 10%
-            _pressure_threshold = max(3, _pool_max * 2 // 10)   # 20%
+            _critical_threshold = max(2, _pool_max // 10)  # 10%
+            _pressure_threshold = max(3, _pool_max * 2 // 10)  # 20%
 
         # Track when the last recovery probe was allowed through
         # during pool exhaustion.  This breaks the deadlock where
@@ -256,10 +258,7 @@ def create_app(  # noqa: C901, PLR0915
                 # number are actually checked out.  The checked_out guard
                 # prevents false rejection when the pool has shrunk due
                 # to idle timeout (pool_size ≈ available ≈ min_connections).
-                if (
-                    available <= _critical_threshold
-                    and checked_out > _critical_threshold
-                ):
+                if available <= _critical_threshold and checked_out > _critical_threshold:
                     log.warning(
                         "Pool critically low — rejecting request "
                         "(available=%s size=%s/%s checked_out=%s waiting=%s path=%s)",
@@ -302,8 +301,7 @@ def create_app(  # noqa: C901, PLR0915
                 # whether this request itself had an exception.
                 if waiting > 0:
                     log.warning(
-                        "Pool pressure at request teardown: "
-                        "size=%s/%s available=%s waiting=%s%s",
+                        "Pool pressure at request teardown: size=%s/%s available=%s waiting=%s%s",
                         stats.get("pool_size", "?"),
                         stats.get("pool_max", "?"),
                         available,
@@ -498,6 +496,7 @@ def start_workers(app: Flask) -> None:
     atexit.register(container.cleanup_worker.stop)
 
     if shutdown_coordinator is not None:
+
         def _drain_on_shutdown() -> None:
             try:
                 shutdown_coordinator.drain_processing_challenges(

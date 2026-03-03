@@ -63,9 +63,7 @@ def _require_str(data: dict, field: str, *, max_length: int = 0) -> str:
     if not isinstance(val, str):
         raise AcmeProblem("about:blank", f"'{field}' must be a string", status=400)
     if "\x00" in val:
-        raise AcmeProblem(
-            "about:blank", f"'{field}' contains invalid characters", status=400
-        )
+        raise AcmeProblem("about:blank", f"'{field}' contains invalid characters", status=400)
     if max_length and len(val) > max_length:
         raise AcmeProblem(
             "about:blank",
@@ -79,9 +77,7 @@ def _require_strict_bool(data: dict, field: str) -> bool:
     """Validate that a field is strictly a boolean (not int/str)."""
     val = data[field]
     if not isinstance(val, bool):
-        raise AcmeProblem(
-            "about:blank", f"'{field}' must be a boolean (true/false)", status=400
-        )
+        raise AcmeProblem("about:blank", f"'{field}' must be a boolean (true/false)", status=400)
     return val
 
 
@@ -143,9 +139,7 @@ def _validate_pagination_params(page_settings: Any) -> tuple[int, int]:
     if offset is None:
         offset = 0
     if limit < 1:
-        raise AcmeProblem(
-            "about:blank", "'limit' must be at least 1", status=400
-        )
+        raise AcmeProblem("about:blank", "'limit' must be at least 1", status=400)
     if limit > page_settings.max_page_size:
         raise AcmeProblem(
             "about:blank",
@@ -153,10 +147,9 @@ def _validate_pagination_params(page_settings: Any) -> tuple[int, int]:
             status=400,
         )
     if offset < 0:
-        raise AcmeProblem(
-            "about:blank", "'offset' must not be negative", status=400
-        )
+        raise AcmeProblem("about:blank", "'offset' must not be negative", status=400)
     return limit, offset
+
 
 admin_bp = Blueprint("admin_api", __name__)
 
@@ -818,9 +811,7 @@ def list_account_identifiers(
     container = get_container()
     acct_repo = getattr(container, "accounts", None)
     if acct_repo is not None and acct_repo.find_by_id(account_id) is None:
-        raise AcmeProblem(
-            "about:blank", "Account not found", status=404
-        )
+        raise AcmeProblem("about:blank", "Account not found", status=404)
     idents = _get_admin_service().list_account_identifiers(
         account_id,
     )
@@ -904,7 +895,9 @@ def create_csr_profile() -> ResponseReturnValue:
             status=400,
         )
 
-    description = _require_str(data, "description", max_length=10000) if "description" in data else ""
+    description = (
+        _require_str(data, "description", max_length=10000) if "description" in data else ""
+    )
 
     container = get_container()
     profile = _get_admin_service().create_csr_profile(
@@ -1097,9 +1090,7 @@ def get_account_csr_profile(
     container = get_container()
     acct_repo = getattr(container, "accounts", None)
     if acct_repo is not None and acct_repo.find_by_id(account_id) is None:
-        raise AcmeProblem(
-            "about:blank", "Account not found", status=404
-        )
+        raise AcmeProblem("about:blank", "Account not found", status=404)
     profile = _get_admin_service().get_account_csr_profile(
         account_id,
     )

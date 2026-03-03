@@ -446,7 +446,10 @@ class TestSendEmail:
         assert envelope == ["user@test.com", "audit@test.com"]
         # BCC must NOT appear in headers
         msg_str = call_args[0][2]
-        assert "audit@test.com" not in msg_str.split("\n\n")[0].lower().replace("audit@test.com", "") or "Bcc" not in msg_str
+        assert (
+            "audit@test.com" not in msg_str.split("\n\n")[0].lower().replace("audit@test.com", "")
+            or "Bcc" not in msg_str
+        )
         assert "Bcc" not in msg_str
 
     @patch("acmeeh.services.notification.smtplib.SMTP")

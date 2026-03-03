@@ -259,7 +259,6 @@ class TestCreateRenewalOrder:
     def test_create_renewal_order_cert_not_found(self):
         """Renewal with a non-existent serial raises MALFORMED (404)."""
 
-
         account_id = uuid4()
         cert_repo = StubCertRepo()
         # No certificate added -- find_by_serial will return None
@@ -278,7 +277,6 @@ class TestCreateRenewalOrder:
 
     def test_create_renewal_order_wrong_account(self):
         """Renewal for a cert owned by a different account raises UNAUTHORIZED."""
-
 
         owner_id = uuid4()
         requester_id = uuid4()
@@ -301,7 +299,6 @@ class TestCreateRenewalOrder:
     def test_create_renewal_order_no_sans(self):
         """Renewal for a cert with no SAN values raises MALFORMED."""
 
-
         account_id = uuid4()
         cert_repo = StubCertRepo()
         cert = _make_cert(account_id, serial="serial003", san_values=[])
@@ -320,7 +317,6 @@ class TestCreateRenewalOrder:
 
     def test_create_renewal_order_no_sans_none(self):
         """Renewal for a cert with san_values=None also raises MALFORMED."""
-
 
         account_id = uuid4()
         cert_repo = StubCertRepo()
@@ -342,7 +338,6 @@ class TestCreateRenewalOrder:
         """Renewal for a cert with both DNS and IP SANs produces correct
         identifier types (dns -> DNS, valid IP -> IP).
         """
-
 
         account_id = uuid4()
         cert_repo = StubCertRepo()

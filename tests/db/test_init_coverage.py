@@ -23,8 +23,8 @@ from acmeeh.db.init import (
 # _get_raw_pool
 # ======================================================================
 
-class TestGetRawPool:
 
+class TestGetRawPool:
     def test_none_when_no_pool_attr(self):
         db = object()
         assert _get_raw_pool(db) is None
@@ -70,8 +70,8 @@ class TestGetRawPool:
 # log_pool_stats
 # ======================================================================
 
-class TestLogPoolStats:
 
+class TestLogPoolStats:
     def test_no_pool(self):
         db = object()
         log_pool_stats(db)  # should not raise
@@ -110,8 +110,8 @@ class TestLogPoolStats:
 # get_pool_health
 # ======================================================================
 
-class TestGetPoolHealth:
 
+class TestGetPoolHealth:
     def test_no_pool(self):
         health, stats = get_pool_health(object())
         assert health == "healthy"
@@ -178,8 +178,8 @@ class TestGetPoolHealth:
 # is_pool_healthy
 # ======================================================================
 
-class TestIsPoolHealthy:
 
+class TestIsPoolHealthy:
     @patch("acmeeh.db.init.get_pool_health")
     def test_healthy(self, mock_health):
         mock_health.return_value = ("healthy", {})
@@ -195,8 +195,8 @@ class TestIsPoolHealthy:
 # _ConnectionWrapper
 # ======================================================================
 
-class TestConnectionWrapper:
 
+class TestConnectionWrapper:
     def test_execute(self):
         conn = MagicMock()
         cur = MagicMock()
@@ -262,8 +262,8 @@ class TestConnectionWrapper:
 # advisory_lock
 # ======================================================================
 
-class TestAdvisoryLock:
 
+class TestAdvisoryLock:
     def test_no_db(self):
         with advisory_lock(None, 123) as (acquired, conn):
             assert acquired is True
@@ -345,8 +345,8 @@ class TestAdvisoryLock:
 # _has_pool_internals
 # ======================================================================
 
-class TestHasPoolInternals:
 
+class TestHasPoolInternals:
     def test_has_all(self):
         pool = MagicMock()
         # MagicMock has all attributes by default
@@ -361,8 +361,8 @@ class TestHasPoolInternals:
 # _close_inherited_connections
 # ======================================================================
 
-class TestCloseInheritedConnections:
 
+class TestCloseInheritedConnections:
     def test_no_pool_deque(self):
         pool = MagicMock(spec=[])
         assert _close_inherited_connections(pool) == 0
@@ -395,8 +395,8 @@ class TestCloseInheritedConnections:
 # _reset_pool_after_fork
 # ======================================================================
 
-class TestResetPoolAfterFork:
 
+class TestResetPoolAfterFork:
     def test_full_reset(self):
         pool = MagicMock()
         pool._pool = deque()
@@ -439,8 +439,9 @@ class TestResetPoolAfterFork:
 
     def test_missing_optional_attrs(self):
         """Test reset when pool lacks optional attributes like _growing."""
-        pool = MagicMock(spec=["_pool", "_nconns", "_workers",
-                               "_closed", "_opened", "_min_size", "open"])
+        pool = MagicMock(
+            spec=["_pool", "_nconns", "_workers", "_closed", "_opened", "_min_size", "open"]
+        )
         pool._pool = deque()
         pool._nconns = 0
         pool._workers = []
@@ -456,8 +457,8 @@ class TestResetPoolAfterFork:
 # reinit_pool_after_fork
 # ======================================================================
 
-class TestReinitPoolAfterFork:
 
+class TestReinitPoolAfterFork:
     @patch("acmeeh.db.init.Database")
     def test_not_initialized(self, MockDB):
         MockDB.is_initialized.return_value = False
@@ -526,8 +527,8 @@ class TestReinitPoolAfterFork:
 # init_database warning paths
 # ======================================================================
 
-class TestInitDatabaseWarnings:
 
+class TestInitDatabaseWarnings:
     @patch("acmeeh.db.init.Database")
     def test_small_max_connections_warning(self, MockDB):
         MockDB.is_initialized.return_value = False
@@ -547,8 +548,9 @@ class TestInitDatabaseWarnings:
 
         with patch("acmeeh.db.init.log") as mock_log:
             init_database(settings)
-            warning_calls = [c for c in mock_log.warning.call_args_list
-                             if "max_connections" in str(c)]
+            warning_calls = [
+                c for c in mock_log.warning.call_args_list if "max_connections" in str(c)
+            ]
             assert len(warning_calls) >= 1
 
     @patch("acmeeh.db.init.Database")
@@ -570,8 +572,9 @@ class TestInitDatabaseWarnings:
 
         with patch("acmeeh.db.init.log") as mock_log:
             init_database(settings)
-            warning_calls = [c for c in mock_log.warning.call_args_list
-                             if "connection_timeout" in str(c)]
+            warning_calls = [
+                c for c in mock_log.warning.call_args_list if "connection_timeout" in str(c)
+            ]
             assert len(warning_calls) >= 1
 
     @patch("acmeeh.db.init.Database")

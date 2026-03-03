@@ -202,9 +202,7 @@ class NotificationService:
                 msg["Cc"] = ", ".join(self._smtp.cc)
             msg.attach(MIMEText(body, "html", "utf-8"))
 
-            envelope_recipients = (
-                [recipient] + list(self._smtp.cc) + list(self._smtp.bcc)
-            )
+            envelope_recipients = [recipient] + list(self._smtp.cc) + list(self._smtp.bcc)
 
             with smtplib.SMTP(
                 self._smtp.host, self._smtp.port, timeout=self._smtp.timeout_seconds

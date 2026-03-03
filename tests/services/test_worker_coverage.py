@@ -36,6 +36,7 @@ def _mock_advisory_lock_acquired(db, lock_id):
     """Mock advisory_lock that always yields (True, MagicMock()) (leader)."""
     yield True, MagicMock()
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -324,7 +325,9 @@ class TestCleanupWorkerRunLoop:
         """Line 178-179: start() returns if thread is already alive."""
         worker = CleanupWorker()
         # Add a dummy task so start() doesn't bail for empty tasks
-        worker._tasks.append(_CleanupTask(name="dummy", interval_seconds=999, func=lambda conn=None: None))
+        worker._tasks.append(
+            _CleanupTask(name="dummy", interval_seconds=999, func=lambda conn=None: None)
+        )
 
         mock_thread = MagicMock()
         mock_thread.is_alive.return_value = True

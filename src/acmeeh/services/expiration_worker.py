@@ -60,7 +60,9 @@ class ExpirationWorker:
     def start(self) -> None:
         """Start the background worker thread."""
         if not self._settings.enabled or not self._settings.expiration_warning_days:
-            log.debug("Expiration worker not started: notifications disabled or no warning thresholds configured")
+            log.debug(
+                "Expiration worker not started: notifications disabled or no warning thresholds configured"
+            )
             return
         if self._notifier is None:
             log.debug("Expiration worker not started: no notification service configured")
@@ -178,11 +180,7 @@ class ExpirationWorker:
 
         claimed_set = self._batch_claim_notices(items)
 
-        claimed = [
-            (days, cert)
-            for days, cert in items
-            if (cert.id, days) in claimed_set
-        ]
+        claimed = [(days, cert) for days, cert in items if (cert.id, days) in claimed_set]
 
         # Phase 2: Send notifications for claimed items (network I/O)
         for warning_days, cert in claimed:
@@ -242,9 +240,7 @@ class ExpirationWorker:
                 tuple(params),
                 as_dict=True,
             )
-            return {
-                (r["certificate_id"], r["warning_days"]) for r in rows
-            }
+            return {(r["certificate_id"], r["warning_days"]) for r in rows}
         except Exception:
             log.exception("Failed to batch-claim expiration notices")
             # On error, skip all to avoid duplicates

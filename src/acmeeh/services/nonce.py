@@ -74,8 +74,7 @@ class NonceService:
                     self._refill_buffer()
                 except Exception:  # noqa: BLE001
                     log.debug(
-                        "Batch nonce generation failed, "
-                        "falling back to single insert",
+                        "Batch nonce generation failed, falling back to single insert",
                     )
                     return self._create_single()
             return self._buffer.popleft()

@@ -78,7 +78,8 @@ def log_pool_stats(db: Any, context: str = "") -> None:
 
 
 def get_pool_health(
-    db: Any, pressure_threshold: int = 3,
+    db: Any,
+    pressure_threshold: int = 3,
 ) -> tuple[str, dict[str, int]]:
     """Return the pool health level and raw stats.
 
@@ -148,7 +149,11 @@ class _ConnectionWrapper:
         return cur.rowcount
 
     def fetch_all(
-        self, query: str, params: tuple | None = None, *, as_dict: bool = False,
+        self,
+        query: str,
+        params: tuple | None = None,
+        *,
+        as_dict: bool = False,
     ) -> list:
         """Fetch all rows (matches ``Database.fetch_all``)."""
         if as_dict:
@@ -160,7 +165,11 @@ class _ConnectionWrapper:
         return self._conn.execute(query, params).fetchall()
 
     def fetch_one(
-        self, query: str, params: tuple | None = None, *, as_dict: bool = False,
+        self,
+        query: str,
+        params: tuple | None = None,
+        *,
+        as_dict: bool = False,
     ) -> Any | None:
         """Fetch one row (matches ``Database.fetch_one``)."""
         if as_dict:
@@ -178,7 +187,9 @@ class _ConnectionWrapper:
 
 
 @contextlib.contextmanager
-def advisory_lock(db: Any, lock_id: int) -> Generator[tuple[bool, _ConnectionWrapper | None], None, None]:
+def advisory_lock(
+    db: Any, lock_id: int
+) -> Generator[tuple[bool, _ConnectionWrapper | None], None, None]:
     """Hold a PostgreSQL advisory lock on a single dedicated connection.
 
     Ensures lock and unlock happen on the **same** connection, fixing the
@@ -226,7 +237,8 @@ def advisory_lock(db: Any, lock_id: int) -> Generator[tuple[bool, _ConnectionWra
     acquired = False
     with db.connection() as conn:
         row = conn.execute(
-            "SELECT pg_try_advisory_lock(%s)", (lock_id,),
+            "SELECT pg_try_advisory_lock(%s)",
+            (lock_id,),
         ).fetchone()
         acquired = bool(row and row[0])
         try:
@@ -235,7 +247,8 @@ def advisory_lock(db: Any, lock_id: int) -> Generator[tuple[bool, _ConnectionWra
             if acquired:
                 with contextlib.suppress(Exception):
                     conn.execute(
-                        "SELECT pg_advisory_unlock(%s)", (lock_id,),
+                        "SELECT pg_advisory_unlock(%s)",
+                        (lock_id,),
                     )
 
 
@@ -274,8 +287,7 @@ def reinit_pool_after_fork() -> None:
     raw_pool = _get_raw_pool(db)
     if raw_pool is None:
         log.warning(
-            "Cannot reset pool after fork: "
-            "pool attribute not accessible on Database",
+            "Cannot reset pool after fork: pool attribute not accessible on Database",
         )
         return
 
@@ -360,12 +372,12 @@ def _reset_pool_after_fork(raw_pool: Any) -> None:
     # All connections are now closed; zero out the counter.  We set it
     # to min_size in step 7 before open() so _start_initial_tasks()
     # knows how many AddConnection tasks to schedule.
-    raw_pool._nconns = 0               # noqa: SLF001
+    raw_pool._nconns = 0  # noqa: SLF001
 
     if hasattr(raw_pool, "_growing"):
-        raw_pool._growing = False      # noqa: SLF001
+        raw_pool._growing = False  # noqa: SLF001
     if hasattr(raw_pool, "_nconns_min"):
-        raw_pool._nconns_min = 0       # noqa: SLF001
+        raw_pool._nconns_min = 0  # noqa: SLF001
 
     # --- Step 3: Clear master's client wait queue ---
     waiting = getattr(raw_pool, "_waiting", None)
@@ -378,7 +390,7 @@ def _reset_pool_after_fork(raw_pool: Any) -> None:
     # Threads don't survive fork().  The old Thread objects are zombies.
     # _start_workers() asserts ``not self._workers``, so we MUST clear
     # the list before calling open().
-    raw_pool._workers = []             # noqa: SLF001
+    raw_pool._workers = []  # noqa: SLF001
     if hasattr(raw_pool, "_sched_runner"):
         raw_pool._sched_runner = None  # noqa: SLF001
 
@@ -393,13 +405,13 @@ def _reset_pool_after_fork(raw_pool: Any) -> None:
     # _check_open() raises if ``_opened and _closed`` (pool was opened
     # then closed and cannot be reused).
     # Setting _closed=True, _opened=False bypasses both guards.
-    raw_pool._closed = True            # noqa: SLF001
-    raw_pool._opened = False           # noqa: SLF001
+    raw_pool._closed = True  # noqa: SLF001
+    raw_pool._opened = False  # noqa: SLF001
 
     # --- Step 7: Set _nconns for initial fill ---
     # _start_initial_tasks() schedules exactly _nconns AddConnection
     # tasks, so we set this to min_size before open().
-    raw_pool._nconns = min_size        # noqa: SLF001
+    raw_pool._nconns = min_size  # noqa: SLF001
 
     # --- Step 8: Reopen the pool ---
     # open() → _open() creates fresh _tasks Queue, _sched Scheduler,
@@ -416,8 +428,7 @@ def _reset_pool_after_fork(raw_pool: Any) -> None:
         )
     except Exception:  # noqa: BLE001
         log.exception(
-            "Failed to reopen pool after fork (pid=%d) — "
-            "pool may be non-functional",
+            "Failed to reopen pool after fork (pid=%d) — pool may be non-functional",
             pid,
         )
 
@@ -477,8 +488,7 @@ def init_database(settings: DatabaseSettings) -> Database:
     )
 
     log.info(
-        "Database initialised successfully "
-        "(pool: min=%d max=%d timeout=%.1fs)",
+        "Database initialised successfully (pool: min=%d max=%d timeout=%.1fs)",
         settings.min_connections,
         settings.max_connections,
         settings.connection_timeout,

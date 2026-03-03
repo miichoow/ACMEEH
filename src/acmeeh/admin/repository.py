@@ -359,8 +359,7 @@ class EabCredentialRepository(BaseRepository[EabCredential]):
         """Bind an EAB credential to an account (without marking as used)."""
         db = Database.get_instance()
         db.execute(
-            "UPDATE admin.eab_credentials SET account_id = %s "
-            "WHERE kid = %s AND revoked = false",
+            "UPDATE admin.eab_credentials SET account_id = %s WHERE kid = %s AND revoked = false",
             (account_id, kid),
         )
 

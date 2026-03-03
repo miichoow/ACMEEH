@@ -189,10 +189,7 @@ class ChallengeWorker:
         )
         jwk_by_authz = {row["authz_id"]: row["jwk"] for row in rows}
 
-        return [
-            (ch, jwk_by_authz.get(ch.authorization_id))
-            for ch in retryable
-        ]
+        return [(ch, jwk_by_authz.get(ch.authorization_id)) for ch in retryable]
 
     def _process_work(self, work_items: list) -> None:
         """Process retryable challenges (slow, advisory lock already released)."""
@@ -210,8 +207,7 @@ class ChallengeWorker:
             # request-handling threads use the connections instead.
             if self._db is not None and not is_pool_healthy(self._db):
                 log.debug(
-                    "Challenge worker: pool under pressure — "
-                    "deferring remaining %d challenges",
+                    "Challenge worker: pool under pressure — deferring remaining %d challenges",
                     len(work_items),
                 )
                 break

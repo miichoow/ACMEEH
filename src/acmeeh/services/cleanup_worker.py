@@ -280,7 +280,11 @@ class CleanupWorker:
 
     @staticmethod
     def _batched_delete(
-        db: Any, table: str, where_clause: str, params: tuple, label: str,
+        db: Any,
+        table: str,
+        where_clause: str,
+        params: tuple,
+        label: str,
     ) -> int:
         """Delete rows in batches to avoid long-held row locks.
 

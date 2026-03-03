@@ -199,9 +199,7 @@ class OrderService:
                         account_id,
                         {
                             "quota_limit": quota_limit,
-                            "attempted_identifiers": [
-                                i.get("value", "") for i in identifiers
-                            ],
+                            "attempted_identifiers": [i.get("value", "") for i in identifiers],
                         },
                     )
                 except Exception:  # noqa: BLE001

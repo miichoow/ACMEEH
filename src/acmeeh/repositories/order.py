@@ -127,7 +127,9 @@ class OrderRepository(BaseRepository[Order]):
         )
         return self._row_to_entity(row) if row else None
 
-    def find_stale_processing(self, stale_threshold_seconds: int = 600, *, conn=None) -> list[Order]:
+    def find_stale_processing(
+        self, stale_threshold_seconds: int = 600, *, conn=None
+    ) -> list[Order]:
         """Find orders stuck in PROCESSING longer than the threshold.
 
         These orders likely belong to an instance that crashed mid-finalization.

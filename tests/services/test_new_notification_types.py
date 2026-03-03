@@ -500,9 +500,7 @@ class TestOrderStaleRecoveredNotification:
         )
 
         # The stale_processing_recovery task should be registered
-        stale_task = next(
-            (t for t in worker._tasks if t.name == "stale_processing_recovery"), None
-        )
+        stale_task = next((t for t in worker._tasks if t.name == "stale_processing_recovery"), None)
         assert stale_task is not None
 
 
@@ -700,9 +698,7 @@ class TestOrderQuotaExceededNotification:
         notifier = MagicMock()
         quota = _make_quota_settings(max_orders_per_account_per_day=10)
 
-        svc = self._make_service(
-            order_repo=order_repo, notifier=notifier, quota_settings=quota
-        )
+        svc = self._make_service(order_repo=order_repo, notifier=notifier, quota_settings=quota)
         with pytest.raises(AcmeProblem) as exc_info:
             svc.create_order(uuid4(), [{"type": "dns", "value": "a.com"}])
         assert exc_info.value.error_type == RATE_LIMITED
@@ -718,9 +714,7 @@ class TestOrderQuotaExceededNotification:
         order_repo.count_orders_since.return_value = 100
         quota = _make_quota_settings(max_orders_per_account_per_day=10)
 
-        svc = self._make_service(
-            order_repo=order_repo, notifier=None, quota_settings=quota
-        )
+        svc = self._make_service(order_repo=order_repo, notifier=None, quota_settings=quota)
         with pytest.raises(AcmeProblem):
             svc.create_order(uuid4(), [{"type": "dns", "value": "a.com"}])
 
@@ -731,9 +725,7 @@ class TestOrderQuotaExceededNotification:
         notifier.notify.side_effect = RuntimeError("boom")
         quota = _make_quota_settings(max_orders_per_account_per_day=10)
 
-        svc = self._make_service(
-            order_repo=order_repo, notifier=notifier, quota_settings=quota
-        )
+        svc = self._make_service(order_repo=order_repo, notifier=notifier, quota_settings=quota)
         with pytest.raises(AcmeProblem) as exc_info:
             svc.create_order(uuid4(), [{"type": "dns", "value": "a.com"}])
         assert exc_info.value.error_type == RATE_LIMITED
@@ -776,9 +768,7 @@ class TestAuthorizationDeactivatedNotification:
         valid_order = _mock_order(account_id=account_id, status=OrderStatus.VALID)
         order_repo.find_orders_by_authorization.return_value = [pending_order, valid_order]
 
-        svc = self._make_service(
-            authz_repo=authz_repo, order_repo=order_repo, notifier=notifier
-        )
+        svc = self._make_service(authz_repo=authz_repo, order_repo=order_repo, notifier=notifier)
         svc.deactivate(authz.id, account_id)
 
         notifier.notify.assert_called_once()
@@ -804,9 +794,7 @@ class TestAuthorizationDeactivatedNotification:
         authz_repo.transition_status.return_value = deactivated
         order_repo.find_orders_by_authorization.return_value = []
 
-        svc = self._make_service(
-            authz_repo=authz_repo, order_repo=order_repo, notifier=notifier
-        )
+        svc = self._make_service(authz_repo=authz_repo, order_repo=order_repo, notifier=notifier)
         svc.deactivate(authz.id, account_id)
 
         notifier.notify.assert_called_once()
@@ -900,19 +888,13 @@ class TestDisabledTypes:
         return svc, notif_repo, account_id
 
     def test_disabled_type_returns_empty(self):
-        svc, notif_repo, account_id = self._make_svc(
-            disabled_types=["challenge_failed"]
-        )
-        result = svc.notify(
-            NotificationType.CHALLENGE_FAILED, account_id, {"foo": "bar"}
-        )
+        svc, notif_repo, account_id = self._make_svc(disabled_types=["challenge_failed"])
+        result = svc.notify(NotificationType.CHALLENGE_FAILED, account_id, {"foo": "bar"})
         assert result == []
         notif_repo.create.assert_not_called()
 
     def test_other_types_still_work_when_one_disabled(self):
-        svc, notif_repo, account_id = self._make_svc(
-            disabled_types=["challenge_failed"]
-        )
+        svc, notif_repo, account_id = self._make_svc(disabled_types=["challenge_failed"])
         with patch.object(svc, "_send_email", return_value=True):
             result = svc.notify(
                 NotificationType.DELIVERY_SUCCEEDED, account_id, {"domains": ["a.com"]}
@@ -937,9 +919,7 @@ class TestDisabledTypes:
     def test_empty_disabled_types_allows_all(self):
         svc, notif_repo, account_id = self._make_svc(disabled_types=[])
         with patch.object(svc, "_send_email", return_value=True):
-            result = svc.notify(
-                NotificationType.CHALLENGE_FAILED, account_id, {"foo": "bar"}
-            )
+            result = svc.notify(NotificationType.CHALLENGE_FAILED, account_id, {"foo": "bar"})
         assert len(result) == 1
         notif_repo.create.assert_called_once()
 
@@ -953,9 +933,7 @@ class TestDisabledTypes:
             NotificationType.ORDER_QUOTA_EXCEEDED,
             NotificationType.AUTHORIZATION_DEACTIVATED,
         ]
-        svc, notif_repo, account_id = self._make_svc(
-            disabled_types=[nt.value for nt in new_types]
-        )
+        svc, notif_repo, account_id = self._make_svc(disabled_types=[nt.value for nt in new_types])
         for nt in new_types:
             result = svc.notify(nt, account_id, {})
             assert result == [], f"{nt.value} should be suppressed"

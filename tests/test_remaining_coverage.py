@@ -42,11 +42,13 @@ def _uuid():
 # ChallengeWorker (services/workers.py)
 # ======================================================================
 
+
 class TestChallengeWorkerPoolPressure:
     """Tests for pool pressure checks in ChallengeWorker._run()."""
 
     def _make_worker(self, db=None, metrics=None):
         from acmeeh.services.workers import ChallengeWorker
+
         return ChallengeWorker(
             challenge_service=MagicMock(),
             challenge_repo=MagicMock(),
@@ -60,8 +62,10 @@ class TestChallengeWorkerPoolPressure:
 
     def _run_one_iteration(self, worker):
         original_wait = worker._stop_event.wait
+
         def _wait_then_stop(timeout=None):
             worker._stop_event.set()
+
         worker._stop_event.wait = _wait_then_stop
         worker._run()
         worker._stop_event.wait = original_wait
@@ -94,6 +98,7 @@ class TestChallengeWorkerPoolPressure:
     @patch("acmeeh.db.init.is_pool_healthy", return_value=True)
     def test_process_error_increments_failures(self, mock_healthy, mock_lock):
         import contextlib
+
         db = MagicMock()
         metrics = MagicMock()
         worker = self._make_worker(db=db, metrics=metrics)
@@ -102,6 +107,7 @@ class TestChallengeWorkerPoolPressure:
         @contextlib.contextmanager
         def _mock_lock(*a, **kw):
             yield True, MagicMock()
+
         mock_lock.side_effect = _mock_lock
 
         worker._collect_work = MagicMock(return_value=[("ch", None)])
@@ -116,6 +122,7 @@ class TestChallengeWorkerCollectWork:
 
     def _make_worker(self):
         from acmeeh.services.workers import ChallengeWorker
+
         return ChallengeWorker(
             challenge_service=MagicMock(),
             challenge_repo=MagicMock(),
@@ -161,6 +168,7 @@ class TestChallengeWorkerProcessWork:
 
     def _make_worker(self, db=None):
         from acmeeh.services.workers import ChallengeWorker
+
         return ChallengeWorker(
             challenge_service=MagicMock(),
             challenge_repo=MagicMock(),
@@ -234,10 +242,11 @@ class TestChallengeWorkerProcessWork:
 # ExpirationWorker
 # ======================================================================
 
-class TestExpirationWorkerCoverage:
 
+class TestExpirationWorkerCoverage:
     def _make_worker(self, db=None, metrics=None, settings=None):
         from acmeeh.services.expiration_worker import ExpirationWorker
+
         if settings is None:
             settings = MagicMock()
             settings.enabled = True
@@ -253,8 +262,10 @@ class TestExpirationWorkerCoverage:
 
     def _run_one_iteration(self, worker):
         original_wait = worker._stop_event.wait
+
         def _wait_then_stop(timeout=None):
             worker._stop_event.set()
+
         worker._stop_event.wait = _wait_then_stop
         worker._run()
         worker._stop_event.wait = original_wait
@@ -271,6 +282,7 @@ class TestExpirationWorkerCoverage:
     @patch("acmeeh.db.init.is_pool_healthy", return_value=True)
     def test_notify_error_increments_failures(self, mock_healthy, mock_lock):
         import contextlib
+
         db = MagicMock()
         metrics = MagicMock()
         worker = self._make_worker(db=db, metrics=metrics)
@@ -278,6 +290,7 @@ class TestExpirationWorkerCoverage:
         @contextlib.contextmanager
         def _mock_lock(*a, **kw):
             yield True, MagicMock()
+
         mock_lock.side_effect = _mock_lock
 
         cert = MagicMock()
@@ -306,11 +319,13 @@ class TestExpirationWorkerCoverage:
 
         # Stop after first iteration
         call_count = 0
+
         def stop_after_first(*args, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count >= 1:
                 worker._stop_event.set()
+
         worker._notifier.notify.side_effect = stop_after_first
 
         worker._send_notifications([(30, [cert])])
@@ -320,10 +335,11 @@ class TestExpirationWorkerCoverage:
 # CleanupWorker
 # ======================================================================
 
-class TestCleanupWorkerCoverage:
 
+class TestCleanupWorkerCoverage:
     def _make_worker(self, db=None, metrics=None):
         from acmeeh.services.cleanup_worker import CleanupWorker
+
         # CleanupWorker takes: nonce_service, order_repo, settings, db_rate_limiter, db, metrics, notifier
         settings = MagicMock()
         settings.retention.cleanup_loop_interval_seconds = 10
@@ -340,8 +356,10 @@ class TestCleanupWorkerCoverage:
 
     def _run_one_iteration(self, worker):
         original_wait = worker._stop_event.wait
+
         def _wait_then_stop(timeout=None):
             worker._stop_event.set()
+
         worker._stop_event.wait = _wait_then_stop
         worker._run()
         worker._stop_event.wait = original_wait
@@ -366,20 +384,30 @@ class TestCleanupWorkerCoverage:
 
     def test_batched_delete_not_int(self):
         from acmeeh.services.cleanup_worker import CleanupWorker
+
         db = MagicMock()
         db.execute.return_value = "not_int"  # Not an int
         result = CleanupWorker._batched_delete(
-            db, "nonces", "expires_at <= now()", (), "test_gc",
+            db,
+            "nonces",
+            "expires_at <= now()",
+            (),
+            "test_gc",
         )
         assert result == 0
 
     def test_batched_delete_multiple_batches(self):
         from acmeeh.services.cleanup_worker import CleanupWorker
+
         db = MagicMock()
         # First batch returns full batch, second returns less
         db.execute.side_effect = [1000, 500]
         result = CleanupWorker._batched_delete(
-            db, "nonces", "expires_at <= now()", (), "test_gc",
+            db,
+            "nonces",
+            "expires_at <= now()",
+            (),
+            "test_gc",
         )
         assert result == 1500
 
@@ -388,10 +416,11 @@ class TestCleanupWorkerCoverage:
 # AccountService (EAB sync, extract_eab_kid)
 # ======================================================================
 
-class TestAccountServiceEABSync:
 
+class TestAccountServiceEABSync:
     def _make_service(self, **kwargs):
         from acmeeh.services.account import AccountService
+
         defaults = {
             "account_repo": MagicMock(),
             "contact_repo": MagicMock(),
@@ -408,6 +437,7 @@ class TestAccountServiceEABSync:
 
     def test_extract_eab_kid_valid(self):
         from acmeeh.services.account import AccountService
+
         header = {"kid": "eab123", "alg": "HS256"}
         protected = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip("=")
         eab = {"protected": protected, "payload": "", "signature": ""}
@@ -416,12 +446,14 @@ class TestAccountServiceEABSync:
 
     def test_extract_eab_kid_invalid_json(self):
         from acmeeh.services.account import AccountService
+
         eab = {"protected": "not-valid-b64!!", "payload": "", "signature": ""}
         result = AccountService._extract_eab_kid(eab)
         assert result is None
 
     def test_extract_eab_kid_no_kid(self):
         from acmeeh.services.account import AccountService
+
         header = {"alg": "HS256"}
         protected = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip("=")
         eab = {"protected": protected, "payload": "", "signature": ""}
@@ -432,18 +464,24 @@ class TestAccountServiceEABSync:
         """When EAB sync fails for existing account, it should not raise."""
         eab_repo = MagicMock()
         eab_repo.bind_account.side_effect = RuntimeError("sync error")
-        eab_repo.find_by_kid.return_value = MagicMock(hmac_key_b64="a2V5", revoked=False, used=False)
+        eab_repo.find_by_kid.return_value = MagicMock(
+            hmac_key_b64="a2V5", revoked=False, used=False
+        )
         svc = self._make_service(
             eab_required=True,
             eab_repo=eab_repo,
         )
         svc._accounts = MagicMock()
         from acmeeh.models.account import Account
+
         existing = Account(
-            id=_uuid(), jwk_thumbprint="tp",
+            id=_uuid(),
+            jwk_thumbprint="tp",
             jwk={"kty": "EC", "crv": "P-256", "x": "a", "y": "b"},
-            status=AccountStatus.VALID, tos_agreed=True,
-            created_at=_utcnow(), updated_at=_utcnow(),
+            status=AccountStatus.VALID,
+            tos_agreed=True,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         svc._accounts.find_by_thumbprint.return_value = existing
         svc._contacts = MagicMock()
@@ -470,11 +508,15 @@ class TestAccountServiceEABSync:
         svc = self._make_service(eab_repo=eab_repo)
         svc._accounts = MagicMock()
         from acmeeh.models.account import Account
+
         existing = Account(
-            id=_uuid(), jwk_thumbprint="tp",
+            id=_uuid(),
+            jwk_thumbprint="tp",
             jwk={"kty": "EC", "crv": "P-256", "x": "a", "y": "b"},
-            status=AccountStatus.VALID, tos_agreed=True,
-            created_at=_utcnow(), updated_at=_utcnow(),
+            status=AccountStatus.VALID,
+            tos_agreed=True,
+            created_at=_utcnow(),
+            updated_at=_utcnow(),
         )
         svc._accounts.find_by_thumbprint.return_value = existing
         svc._contacts = MagicMock()
@@ -492,8 +534,8 @@ class TestAccountServiceEABSync:
 # OrderService
 # ======================================================================
 
-class TestOrderServiceCoverage:
 
+class TestOrderServiceCoverage:
     def test_ascii_label_too_long(self):
         """ASCII label > 63 characters raises REJECTED_IDENTIFIER."""
         from acmeeh.app.errors import AcmeProblem
@@ -502,14 +544,18 @@ class TestOrderServiceCoverage:
         long_label = "a" * 64  # 64 ASCII chars > 63 limit
         with pytest.raises(AcmeProblem) as exc_info:
             _normalize_idn(f"{long_label}.example.com")
-        assert "63-byte limit" in str(exc_info.value.detail) or "exceeds" in str(exc_info.value.detail)
+        assert "63-byte limit" in str(exc_info.value.detail) or "exceeds" in str(
+            exc_info.value.detail
+        )
 
     def test_notify_order_rejected(self):
         from acmeeh.services.order import OrderService
+
         svc = MagicMock(spec=OrderService)
         svc._notifier = MagicMock()
 
         from acmeeh.models.order import Identifier
+
         idents = [Identifier(type=IdentifierType.DNS, value="bad.example.com")]
 
         # Call the real method on the mock
@@ -518,10 +564,12 @@ class TestOrderServiceCoverage:
 
     def test_notify_order_rejected_no_notifier(self):
         from acmeeh.services.order import OrderService
+
         svc = MagicMock(spec=OrderService)
         svc._notifier = None
 
         from acmeeh.models.order import Identifier
+
         idents = [Identifier(type=IdentifierType.DNS, value="bad.example.com")]
 
         # Should not raise
@@ -529,11 +577,13 @@ class TestOrderServiceCoverage:
 
     def test_notify_order_rejected_exception(self):
         from acmeeh.services.order import OrderService
+
         svc = MagicMock(spec=OrderService)
         svc._notifier = MagicMock()
         svc._notifier.notify.side_effect = RuntimeError("notify error")
 
         from acmeeh.models.order import Identifier
+
         idents = [Identifier(type=IdentifierType.DNS, value="bad.example.com")]
 
         # Should not raise
@@ -544,16 +594,16 @@ class TestOrderServiceCoverage:
 # JWS (core/jws.py)
 # ======================================================================
 
-class TestJWSCoverage:
 
+class TestJWSCoverage:
     def test_unexpected_fields_in_jws(self):
         from acmeeh.app.errors import AcmeProblem
         from acmeeh.core.jws import parse_jws
 
         jws = {
-            "protected": base64.urlsafe_b64encode(
-                json.dumps({"alg": "ES256"}).encode()
-            ).decode().rstrip("="),
+            "protected": base64.urlsafe_b64encode(json.dumps({"alg": "ES256"}).encode())
+            .decode()
+            .rstrip("="),
             "payload": "",
             "signature": base64.urlsafe_b64encode(b"sig").decode().rstrip("="),
             "extra_field": "unexpected",
@@ -569,30 +619,36 @@ class TestJWSCoverage:
         # Payload that's valid base64 but invalid JSON
         bad_payload = base64.urlsafe_b64encode(b"not json").decode().rstrip("=")
         jws = {
-            "protected": base64.urlsafe_b64encode(
-                json.dumps({"alg": "ES256"}).encode()
-            ).decode().rstrip("="),
+            "protected": base64.urlsafe_b64encode(json.dumps({"alg": "ES256"}).encode())
+            .decode()
+            .rstrip("="),
             "payload": bad_payload,
             "signature": base64.urlsafe_b64encode(b"sig").decode().rstrip("="),
         }
         with pytest.raises(AcmeProblem) as exc_info:
             parse_jws(json.dumps(jws).encode())
-        assert "payload" in str(exc_info.value.detail).lower() or "decode" in str(exc_info.value.detail).lower()
+        assert (
+            "payload" in str(exc_info.value.detail).lower()
+            or "decode" in str(exc_info.value.detail).lower()
+        )
 
     def test_signature_decode_exception(self):
         from acmeeh.app.errors import AcmeProblem
         from acmeeh.core.jws import parse_jws
 
         jws = {
-            "protected": base64.urlsafe_b64encode(
-                json.dumps({"alg": "ES256"}).encode()
-            ).decode().rstrip("="),
+            "protected": base64.urlsafe_b64encode(json.dumps({"alg": "ES256"}).encode())
+            .decode()
+            .rstrip("="),
             "payload": "",
             "signature": "!!!invalid-base64!!!",
         }
         with pytest.raises(AcmeProblem) as exc_info:
             parse_jws(json.dumps(jws).encode())
-        assert "signature" in str(exc_info.value.detail).lower() or "decode" in str(exc_info.value.detail).lower()
+        assert (
+            "signature" in str(exc_info.value.detail).lower()
+            or "decode" in str(exc_info.value.detail).lower()
+        )
 
     def test_eab_inner_header_decode_exception(self):
         from acmeeh.app.errors import AcmeProblem
@@ -630,7 +686,9 @@ class TestJWSCoverage:
                 outer_jwk={"kty": "EC"},
                 hmac_key_b64=base64.urlsafe_b64encode(b"key").decode().rstrip("="),
             )
-        assert "EAB" in str(exc_info.value.detail) or "payload" in str(exc_info.value.detail).lower()
+        assert (
+            "EAB" in str(exc_info.value.detail) or "payload" in str(exc_info.value.detail).lower()
+        )
 
     def test_eab_signature_decode_exception(self):
         from acmeeh.app.errors import AcmeProblem
@@ -639,9 +697,13 @@ class TestJWSCoverage:
         outer_jwk = {"kty": "EC", "crv": "P-256"}
         header = {"alg": "HS256", "kid": "eab-kid"}
         protected = base64.urlsafe_b64encode(json.dumps(header).encode()).decode().rstrip("=")
-        payload = base64.urlsafe_b64encode(
-            json.dumps(outer_jwk, sort_keys=True, separators=(",", ":")).encode()
-        ).decode().rstrip("=")
+        payload = (
+            base64.urlsafe_b64encode(
+                json.dumps(outer_jwk, sort_keys=True, separators=(",", ":")).encode()
+            )
+            .decode()
+            .rstrip("=")
+        )
 
         inner_jws = {
             "protected": protected,
@@ -654,15 +716,17 @@ class TestJWSCoverage:
                 outer_jwk=outer_jwk,
                 hmac_key_b64=base64.urlsafe_b64encode(b"secretkey12345678").decode().rstrip("="),
             )
-        assert "EAB" in str(exc_info.value.detail) or "signature" in str(exc_info.value.detail).lower()
+        assert (
+            "EAB" in str(exc_info.value.detail) or "signature" in str(exc_info.value.detail).lower()
+        )
 
 
 # ======================================================================
 # DNS-01 Challenge Handler
 # ======================================================================
 
-class TestDNS01Coverage:
 
+class TestDNS01Coverage:
     @patch("acmeeh.challenge.dns01.dns")
     def test_authoritative_ns_a_record_exception(self, mock_dns):
         """DNS-01: A record lookup for NS fails."""
@@ -698,6 +762,7 @@ class TestDNS01Coverage:
 
         # No NS IPs found → falls back to standard resolution → then TXT fails
         from acmeeh.challenge.base import ChallengeError
+
         with pytest.raises((ChallengeError, Exception)):
             handler.validate(
                 identifier_type="dns",
@@ -711,8 +776,8 @@ class TestDNS01Coverage:
 # HTTP-01 Challenge Handler
 # ======================================================================
 
-class TestHTTP01Coverage:
 
+class TestHTTP01Coverage:
     def test_blocked_network_unparseable(self):
         """HTTP-01: unparseable CIDR in blocked_networks."""
         from acmeeh.challenge.http01 import Http01Validator
@@ -737,6 +802,7 @@ class TestHTTP01Coverage:
                 mock_urllib.Request = MagicMock()
 
                 from acmeeh.challenge.base import ChallengeError
+
                 try:
                     handler.validate(
                         identifier_type="dns",
@@ -804,8 +870,8 @@ class TestHTTP01Coverage:
 # TLS-ALPN-01 Coverage
 # ======================================================================
 
-class TestTLSALPN01Coverage:
 
+class TestTLSALPN01Coverage:
     def test_der_parse_exception(self):
         """TLS-ALPN-01: DER certificate parse exception."""
         from acmeeh.challenge.base import ChallengeError
@@ -838,11 +904,12 @@ class TestTLSALPN01Coverage:
 # Server (wsgi.py, gunicorn_app.py)
 # ======================================================================
 
-class TestServerCoverage:
 
+class TestServerCoverage:
     def test_gunicorn_app_post_fork_closure(self):
         """Test that run_gunicorn creates a _post_fork closure."""
         from acmeeh.server.gunicorn_app import run_gunicorn
+
         assert callable(run_gunicorn)
 
 
@@ -850,8 +917,8 @@ class TestServerCoverage:
 # Config validation
 # ======================================================================
 
-class TestConfigValidationCoverage:
 
+class TestConfigValidationCoverage:
     def test_nonce_length_too_short(self):
         """Config: nonce.length below minimum warns/errors."""
         import tempfile
@@ -877,7 +944,9 @@ class TestConfigValidationCoverage:
             "nonce": {"length": 8},  # Below 16 minimum
         }
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False,
+            mode="w",
+            suffix=".yaml",
+            delete=False,
         ) as f:
             yaml.dump(config_data, f)
             f.flush()
@@ -919,7 +988,9 @@ class TestConfigValidationCoverage:
             "security": {"min_rsa_key_size": 1024},
         }
         with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".yaml", delete=False,
+            mode="w",
+            suffix=".yaml",
+            delete=False,
         ) as f:
             yaml.dump(config_data, f)
             f.flush()
@@ -940,10 +1011,11 @@ class TestConfigValidationCoverage:
 # Nonce Service
 # ======================================================================
 
-class TestNonceServiceCoverage:
 
+class TestNonceServiceCoverage:
     def test_gc_returns_count(self):
         from acmeeh.services.nonce import NonceService
+
         nonce_repo = MagicMock()
         nonce_repo.gc_expired.return_value = 5
         svc = NonceService(

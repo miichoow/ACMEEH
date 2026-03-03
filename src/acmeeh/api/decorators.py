@@ -38,11 +38,13 @@ log = logging.getLogger(__name__)
 # Endpoints that must never waste a DB connection on nonce generation.
 # Health probes, directory (static GET), and admin routes are not ACME
 # protocol exchanges and don't need Replay-Nonce.
-_NONCE_SKIP_ENDPOINTS = frozenset({
-    "livez",
-    "healthz",
-    "readyz",
-})
+_NONCE_SKIP_ENDPOINTS = frozenset(
+    {
+        "livez",
+        "healthz",
+        "readyz",
+    }
+)
 
 _NONCE_SKIP_PREFIXES = (
     "admin_api.",

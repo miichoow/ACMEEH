@@ -225,9 +225,7 @@ class AuthorizationService:
         self._authz.create(authz)
 
         # Create challenges — use enabled types from config
-        enabled_types = [
-            ChallengeType(t) for t in self._enabled_types if not t.startswith("ext:")
-        ]
+        enabled_types = [ChallengeType(t) for t in self._enabled_types if not t.startswith("ext:")]
         created_challenges = []
         for ctype in enabled_types:
             # HTTP-01 not valid for wildcards or IP identifiers
