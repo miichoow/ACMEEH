@@ -148,9 +148,12 @@ class AcmeProxyBackend(CABackend):
             client_kwargs["proxy_url"] = self._proxy.proxy_url
         if not self._proxy.verify_ssl:
             client_kwargs["verify_ssl"] = False  # noqa: FBT003
-            import urllib3  # noqa: PLC0415
+            try:
+                import urllib3  # noqa: PLC0415
 
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            except ImportError:
+                pass
 
         self._client = acme_client_cls(**client_kwargs)
 
