@@ -209,6 +209,14 @@ def parse_jws(body: bytes) -> JWSObject:
             msg = f"JWS missing required field '{field}'"
             raise AcmeProblem(MALFORMED, msg)
 
+    # RFC 8555 §6.2: JWS Flattened Serialization must contain exactly
+    # "protected", "payload", and "signature" — reject unexpected fields.
+    _allowed_fields = {"protected", "payload", "signature"}
+    extra = set(outer) - _allowed_fields
+    if extra:
+        msg = f"JWS contains unexpected fields: {', '.join(sorted(extra))}"
+        raise AcmeProblem(MALFORMED, msg)
+
     protected_b64: str = outer["protected"]
     payload_b64: str = outer["payload"]
     signature_b64: str = outer["signature"]

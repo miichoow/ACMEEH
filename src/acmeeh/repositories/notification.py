@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from pypgkit import BaseRepository, Database
@@ -11,6 +12,8 @@ from acmeeh.models.notification import Notification
 
 if TYPE_CHECKING:
     from uuid import UUID
+
+log = logging.getLogger(__name__)
 
 
 class NotificationRepository(BaseRepository[Notification]):

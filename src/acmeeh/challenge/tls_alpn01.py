@@ -80,6 +80,12 @@ class TlsAlpn01Validator(ChallengeValidator):
         key_authz = key_authorization(token, jwk)
         expected_digest = hashlib.sha256(key_authz.encode("ascii")).digest()
 
+        log.debug(
+            "TLS-ALPN-01 validation: connecting to %s:%s",
+            identifier_value,
+            port,
+        )
+
         # Step 2: TLS connect with ALPN and minimum version
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
@@ -112,6 +118,7 @@ class TlsAlpn01Validator(ChallengeValidator):
                     msg = (
                         f"ALPN negotiation failed: expected '{_ACME_TLS_ALPN}', got '{negotiated}'"
                     )
+                    log.warning(msg)
                     raise ChallengeError(
                         msg,
                         retryable=False,
@@ -130,6 +137,7 @@ class TlsAlpn01Validator(ChallengeValidator):
             raise
         except (ssl.SSLError, OSError) as exc:
             msg = f"TLS connection to {identifier_value}:{port} failed: {exc}"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=True,
@@ -174,6 +182,7 @@ class TlsAlpn01Validator(ChallengeValidator):
                 f"Certificate SAN does not contain identifier "
                 f"({identifier_type}: {identifier_value})"
             )
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=False,
@@ -209,6 +218,7 @@ class TlsAlpn01Validator(ChallengeValidator):
 
         if actual_digest != expected_digest:
             msg = "acmeIdentifier extension digest does not match expected value"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=False,

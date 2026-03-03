@@ -6,11 +6,15 @@ The client sends ``{}`` as the payload to signal readiness.
 
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, current_app, g, jsonify
 
 from acmeeh.api.decorators import require_jws
 from acmeeh.api.serializers import serialize_challenge
 from acmeeh.app.context import get_container
+
+log = logging.getLogger(__name__)
 
 challenge_bp = Blueprint("challenge", __name__)
 
@@ -48,6 +52,7 @@ def trigger_challenge(challenge_id):
         return response
 
     # Trigger validation (payload should be {})
+    log.info("Challenge validation triggered: %s by account %s", challenge_id, g.account.id)
     challenge = container.challenge_service.initiate_validation(
         challenge_id,
         g.account.id,

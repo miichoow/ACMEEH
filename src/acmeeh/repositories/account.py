@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from psycopg.rows import dict_row
@@ -13,6 +14,8 @@ from acmeeh.models.account import Account, AccountContact
 
 if TYPE_CHECKING:
     from uuid import UUID
+
+log = logging.getLogger(__name__)
 
 
 class AccountRepository(BaseRepository[Account]):
@@ -65,6 +68,11 @@ class AccountRepository(BaseRepository[Account]):
             (Jsonb(new_jwk), new_thumbprint, account_id, AccountStatus.VALID.value),
             as_dict=True,
         )
+        if row is None:
+            log.debug(
+                "CAS guard failed: account %s not in valid status for JWK update",
+                account_id,
+            )
         return self._row_to_entity(row) if row else None
 
     def deactivate(self, account_id: UUID) -> Account | None:
@@ -79,6 +87,11 @@ class AccountRepository(BaseRepository[Account]):
             (AccountStatus.DEACTIVATED.value, account_id, AccountStatus.VALID.value),
             as_dict=True,
         )
+        if row is None:
+            log.debug(
+                "CAS guard failed: account %s not in valid status for deactivation",
+                account_id,
+            )
         return self._row_to_entity(row) if row else None
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from psycopg.types.json import Jsonb
@@ -13,6 +14,8 @@ from acmeeh.models.order import Identifier, Order
 if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
+
+log = logging.getLogger(__name__)
 
 
 class OrderRepository(BaseRepository[Order]):
@@ -124,12 +127,12 @@ class OrderRepository(BaseRepository[Order]):
         )
         return self._row_to_entity(row) if row else None
 
-    def find_stale_processing(self, stale_threshold_seconds: int = 600) -> list[Order]:
+    def find_stale_processing(self, stale_threshold_seconds: int = 600, *, conn=None) -> list[Order]:
         """Find orders stuck in PROCESSING longer than the threshold.
 
         These orders likely belong to an instance that crashed mid-finalization.
         """
-        db = Database.get_instance()
+        db = conn or Database.get_instance()
         rows = db.fetch_all(
             "SELECT * FROM orders "
             "WHERE status = %s "
@@ -140,7 +143,7 @@ class OrderRepository(BaseRepository[Order]):
         )
         return [self._row_to_entity(r) for r in rows]
 
-    def find_expired_actionable(self, cutoff=None) -> list[Order]:
+    def find_expired_actionable(self, cutoff=None, *, conn=None) -> list[Order]:
         """Find orders whose expires timestamp has passed and are still actionable.
 
         Parameters
@@ -149,7 +152,7 @@ class OrderRepository(BaseRepository[Order]):
             Optional datetime cutoff.  Defaults to ``now()`` in SQL.
 
         """
-        db = Database.get_instance()
+        db = conn or Database.get_instance()
         if cutoff is not None:
             rows = db.fetch_all(
                 "SELECT * FROM orders "
@@ -186,13 +189,14 @@ class OrderRepository(BaseRepository[Order]):
         to_status: OrderStatus,
         error: dict | None = None,
         certificate_id: UUID | None = None,
+        conn=None,
     ) -> Order | None:
         """Atomic compare-and-swap status transition.
 
         Returns the updated order, or None if the current status did
         not match *from_status*.
         """
-        db = Database.get_instance()
+        db = conn or Database.get_instance()
         set_parts = ["status = %s"]
         params: list = [to_status.value]
 
@@ -210,6 +214,13 @@ class OrderRepository(BaseRepository[Order]):
             tuple(params),
             as_dict=True,
         )
+        if row is None:
+            log.debug(
+                "CAS guard failed: order %s not in %s for transition to %s",
+                order_id,
+                from_status.value,
+                to_status.value,
+            )
         return self._row_to_entity(row) if row else None
 
     def link_authorization(self, order_id: UUID, authz_id: UUID) -> None:

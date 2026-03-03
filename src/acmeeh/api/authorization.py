@@ -6,11 +6,15 @@ deactivate.
 
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, g, jsonify
 
 from acmeeh.api.decorators import require_jws
 from acmeeh.api.serializers import serialize_authorization
 from acmeeh.app.context import get_container
+
+log = logging.getLogger(__name__)
 
 authorization_bp = Blueprint("authorization", __name__)
 
@@ -28,6 +32,7 @@ def get_authorization(authz_id):
 
     # Deactivation request
     if payload and payload.get("status") == "deactivated":
+        log.info("Authorization deactivation requested: %s", authz_id)
         authz = container.authorization_service.deactivate(
             authz_id,
             g.account.id,

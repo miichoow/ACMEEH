@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from pypgkit import BaseRepository, Database
@@ -12,6 +13,8 @@ from acmeeh.models.certificate import Certificate
 if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
+
+log = logging.getLogger(__name__)
 
 
 class CertificateRepository(BaseRepository[Certificate]):
@@ -92,6 +95,11 @@ class CertificateRepository(BaseRepository[Certificate]):
             (reason_value, certificate_id),
             as_dict=True,
         )
+        if row is None:
+            log.debug(
+                "CAS guard failed: certificate %s already revoked",
+                certificate_id,
+            )
         return self._row_to_entity(row) if row else None
 
     def next_serial(self) -> int:
@@ -101,9 +109,9 @@ class CertificateRepository(BaseRepository[Certificate]):
             "SELECT nextval('certificate_serial_seq')",
         )
 
-    def find_expiring(self, before: datetime) -> list[Certificate]:
+    def find_expiring(self, before: datetime, *, conn=None) -> list[Certificate]:
         """Find non-revoked certificates expiring before the given time."""
-        db = Database.get_instance()
+        db = conn or Database.get_instance()
         rows = db.fetch_all(
             "SELECT * FROM certificates "
             "WHERE not_after_cert < %s "
@@ -187,10 +195,16 @@ class CertificateRepository(BaseRepository[Certificate]):
             status = filters["status"]
             if status == "revoked":
                 conditions.append("revoked_at IS NOT NULL")
-            elif status == "valid":
+            elif status in ("active", "valid"):
                 conditions.append("revoked_at IS NULL AND not_after_cert > now()")
             elif status == "expired":
                 conditions.append("not_after_cert <= now()")
+        if "serial_numbers" in filters:
+            serial_list = filters["serial_numbers"]
+            if serial_list:
+                placeholders = ", ".join(["%s"] * len(serial_list))
+                conditions.append(f"serial_number IN ({placeholders})")
+                params.extend(serial_list)
         if "domain" in filters:
             conditions.append("san_values @> %s::jsonb")
             import json

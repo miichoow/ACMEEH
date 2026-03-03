@@ -123,6 +123,28 @@ class TrustedProxyMiddleware:
         return self.app(environ, start_response)
 
 
+class ServerHeaderMiddleware:
+    """WSGI middleware that replaces the ``Server`` response header.
+
+    Applied as the outermost WSGI layer so it overrides any header set
+    by the WSGI server itself (e.g. Werkzeug's ``Server: Werkzeug/x.y``
+    or gunicorn's default).
+    """
+
+    def __init__(self, app, *, server_name: str = "ACMEEH") -> None:
+        self.app = app
+        self._server_name = server_name
+
+    def __call__(self, environ, start_response):
+        def _start_response(status, headers, exc_info=None):
+            # Remove any existing Server header(s) and inject ours
+            filtered = [(k, v) for k, v in headers if k.lower() != "server"]
+            filtered.append(("Server", self._server_name))
+            return start_response(status, filtered, exc_info)
+
+        return self.app(environ, _start_response)
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Flask request lifecycle hooks
 # ═══════════════════════════════════════════════════════════════════════════

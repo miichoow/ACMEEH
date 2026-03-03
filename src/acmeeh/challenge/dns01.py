@@ -60,6 +60,7 @@ class Dns01Validator(ChallengeValidator):
         """
         if identifier_type != "dns":
             msg = f"DNS-01 only supports 'dns' identifiers, got '{identifier_type}'"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=False,
@@ -153,6 +154,7 @@ class Dns01Validator(ChallengeValidator):
                         f"for {query_name} — response not authenticated "
                         f"(AD flag not set)"
                     )
+                    log.warning(msg)
                     raise ChallengeError(
                         msg,
                         retryable=True,
@@ -163,6 +165,7 @@ class Dns01Validator(ChallengeValidator):
                 f"DNS-01 validation failed: {query_name} does not exist "
                 f"(NXDOMAIN) — record may not have propagated yet"
             )
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=True,
@@ -172,6 +175,7 @@ class Dns01Validator(ChallengeValidator):
                 f"DNS-01 validation failed: {query_name} exists but has "
                 f"no TXT records — record may not have propagated yet"
             )
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=True,
@@ -181,18 +185,21 @@ class Dns01Validator(ChallengeValidator):
                 f"DNS-01 validation failed: no nameservers available "
                 f"for {query_name} (SERVFAIL or all refused)"
             )
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=True,
             ) from exc
         except dns.exception.Timeout as exc:
             msg = f"DNS-01 validation failed: DNS query for {query_name} timed out after {timeout}s"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=True,
             ) from exc
         except dns.exception.DNSException as exc:
             msg = f"DNS-01 validation failed: DNS error querying {query_name}: {exc}"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=True,
@@ -218,6 +225,7 @@ class Dns01Validator(ChallengeValidator):
             f"matches the expected digest. Found {len(found_values)} "
             f"record(s) but none matched"
         )
+        log.warning(msg)
         raise ChallengeError(
             msg,
             retryable=True,

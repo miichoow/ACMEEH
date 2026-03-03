@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, current_app, g, jsonify
 
 from acmeeh.api.decorators import require_jws
@@ -14,6 +16,8 @@ from acmeeh.api.serializers import serialize_order
 from acmeeh.app.context import get_container
 from acmeeh.app.errors import MALFORMED, AcmeProblem
 from acmeeh.core.jws import _b64url_decode
+
+log = logging.getLogger(__name__)
 
 order_bp = Blueprint("order", __name__)
 
@@ -59,6 +63,7 @@ def new_order():
             profile=payload.get("profile"),
         )
 
+    log.info("Order %s created for account %s", order.id, g.account.id)
     body = serialize_order(order, authz_ids, container.urls)
     response = jsonify(body)
     response.status_code = 201
@@ -110,8 +115,10 @@ def finalize_order(order_id):
     try:
         csr_der = _b64url_decode(csr_b64)
     except Exception:
+        log.warning("Malformed base64url CSR in finalize request for order %s", order_id)
         raise AcmeProblem(MALFORMED, "Invalid base64url-encoded CSR")
 
+    log.info("Finalize requested for order %s by account %s", order_id, g.account.id)
     order = container.certificate_service.finalize_order(
         order_id,
         csr_der,

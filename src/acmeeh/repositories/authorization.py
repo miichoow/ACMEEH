@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from pypgkit import BaseRepository, Database
@@ -11,6 +12,8 @@ from acmeeh.models.authorization import Authorization
 
 if TYPE_CHECKING:
     from uuid import UUID
+
+log = logging.getLogger(__name__)
 
 
 class AuthorizationRepository(BaseRepository[Authorization]):
@@ -117,6 +120,13 @@ class AuthorizationRepository(BaseRepository[Authorization]):
             (to_status.value, authz_id, from_status.value),
             as_dict=True,
         )
+        if row is None:
+            log.debug(
+                "CAS guard failed: authz %s not in %s for transition to %s",
+                authz_id,
+                from_status.value,
+                to_status.value,
+            )
         return self._row_to_entity(row) if row else None
 
     def deactivate_for_account(self, account_id: UUID) -> int:

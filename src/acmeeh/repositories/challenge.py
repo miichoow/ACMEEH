@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from psycopg.types.json import Jsonb
@@ -13,6 +14,8 @@ from acmeeh.models.challenge import Challenge
 if TYPE_CHECKING:
     from datetime import datetime
     from uuid import UUID
+
+log = logging.getLogger(__name__)
 
 
 class ChallengeRepository(BaseRepository[Challenge]):
@@ -113,6 +116,25 @@ class ChallengeRepository(BaseRepository[Challenge]):
             ),
         )
 
+    def find_retryable(self, now: datetime, *, conn=None) -> list[Challenge]:
+        """Return pending challenges eligible for retry by the background worker.
+
+        Selects challenges that are PENDING with retry_count >= 1 and whose
+        backoff window has elapsed (next_retry_at IS NULL or <= now).
+        """
+        db = conn or Database.get_instance()
+        rows = db.fetch_all(
+            "SELECT * FROM challenges "
+            "WHERE status = %s "
+            "  AND retry_count >= 1 "
+            "  AND (next_retry_at IS NULL OR next_retry_at <= %s) "
+            "ORDER BY updated_at "
+            "LIMIT 100",
+            (ChallengeStatus.PENDING.value, now),
+            as_dict=True,
+        )
+        return [self._row_to_entity(r) for r in rows]
+
     def claim_for_processing(
         self,
         challenge_id: UUID,
@@ -141,6 +163,11 @@ class ChallengeRepository(BaseRepository[Challenge]):
             ),
             as_dict=True,
         )
+        if row is None:
+            log.debug(
+                "CAS guard failed: challenge %s not claimable (not pending or already locked)",
+                challenge_id,
+            )
         return self._row_to_entity(row) if row else None
 
     def complete_validation(
@@ -197,7 +224,7 @@ class ChallengeRepository(BaseRepository[Challenge]):
             )
         return self._row_to_entity(row) if row else None
 
-    def release_stale_locks(self, stale_threshold: datetime) -> int:
+    def release_stale_locks(self, stale_threshold: datetime, *, conn=None) -> int:
         """Release locks on challenges stuck in 'processing' state.
 
         Resets challenges locked before *stale_threshold* back to
@@ -205,10 +232,10 @@ class ChallengeRepository(BaseRepository[Challenge]):
 
         Returns the number of released challenges.
         """
-        db = Database.get_instance()
-        return db.execute(
+        db = conn or Database.get_instance()
+        count = db.execute(
             "UPDATE challenges "
-            "SET status = %s, locked_by = NULL, locked_at = NULL "
+            "SET status = %s, retry_count = retry_count + 1, locked_by = NULL, locked_at = NULL "
             "WHERE status = %s "
             "  AND locked_at < %s",
             (
@@ -217,6 +244,9 @@ class ChallengeRepository(BaseRepository[Challenge]):
                 stale_threshold,
             ),
         )
+        if count:
+            log.info("Released %d stale challenge lock(s)", count)
+        return count
 
     def claim_with_advisory_lock(self, challenge_id: UUID) -> bool:
         """Try to acquire a PostgreSQL advisory lock for a challenge.
@@ -246,7 +276,7 @@ class ChallengeRepository(BaseRepository[Challenge]):
         db = Database.get_instance()
         result = db.execute(
             "UPDATE challenges "
-            "SET status = %s, locked_by = NULL, locked_at = NULL "
+            "SET status = %s, retry_count = retry_count + 1, locked_by = NULL, locked_at = NULL "
             "WHERE status = %s",
             (ChallengeStatus.PENDING.value, ChallengeStatus.PROCESSING.value),
         )

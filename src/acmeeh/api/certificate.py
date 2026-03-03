@@ -6,12 +6,16 @@
 
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, g, make_response
 
 from acmeeh.api.decorators import require_jws
 from acmeeh.app.context import get_container
 from acmeeh.app.errors import MALFORMED, AcmeProblem
 from acmeeh.core.jws import _b64url_decode
+
+log = logging.getLogger(__name__)
 
 certificate_bp = Blueprint("certificate", __name__)
 
@@ -47,6 +51,7 @@ def revoke_certificate():
     try:
         cert_der = _b64url_decode(cert_b64)
     except Exception:
+        log.warning("Malformed base64url certificate in revocation request")
         raise AcmeProblem(MALFORMED, "Invalid base64url-encoded certificate")
 
     reason = payload.get("reason")
@@ -55,6 +60,7 @@ def revoke_certificate():
     account_id = g.account.id if g.account else None
     jwk = g.jwk_dict if g.account is None else None
 
+    log.info("Certificate revocation requested (auth=%s)", "kid" if account_id else "jwk")
     container.certificate_service.revoke(
         cert_der=cert_der,
         reason=reason,

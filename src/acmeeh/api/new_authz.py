@@ -6,12 +6,16 @@ identifier before placing an order.
 
 from __future__ import annotations
 
+import logging
+
 from flask import Blueprint, g, jsonify
 
 from acmeeh.api.decorators import require_jws
 from acmeeh.api.serializers import serialize_authorization
 from acmeeh.app.context import get_container
 from acmeeh.app.errors import MALFORMED, UNSUPPORTED_IDENTIFIER, AcmeProblem
+
+log = logging.getLogger(__name__)
 
 new_authz_bp = Blueprint("new_authz", __name__)
 
@@ -44,6 +48,12 @@ def new_authz():
         identifier_value=id_value.lower() if id_type == "dns" else id_value,
     )
 
+    log.info(
+        "Pre-authorization created: %s for %s:%s",
+        authz.id,
+        id_type,
+        id_value,
+    )
     body = serialize_authorization(authz, challenges, container.urls)
     response = jsonify(body)
     response.status_code = 201

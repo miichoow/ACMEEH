@@ -58,6 +58,7 @@ class Http01Validator(ChallengeValidator):
         """
         if identifier_type != "dns":
             msg = f"HTTP-01 only supports 'dns' identifiers, got '{identifier_type}'"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=False,
@@ -97,6 +98,7 @@ class Http01Validator(ChallengeValidator):
                     )
                 except socket.gaierror as exc:
                     msg = f"HTTP-01 validation failed: could not resolve {identifier_value}: {exc}"
+                    log.warning(msg)
                     raise ChallengeError(
                         msg,
                         retryable=True,
@@ -118,6 +120,7 @@ class Http01Validator(ChallengeValidator):
                         f"{identifier_value} are in blocked networks "
                         f"(resolved: {sorted(resolved_ips)})"
                     )
+                    log.warning(msg)
                     raise ChallengeError(
                         msg,
                         retryable=False,
@@ -134,6 +137,7 @@ class Http01Validator(ChallengeValidator):
             resp = urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as exc:
             msg = f"HTTP-01 validation failed: server returned HTTP {exc.code} for {url}"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=True,
@@ -142,6 +146,7 @@ class Http01Validator(ChallengeValidator):
             msg = (
                 f"HTTP-01 validation failed: could not connect to {identifier_value}:{port}: {exc}"
             )
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=True,
@@ -150,6 +155,7 @@ class Http01Validator(ChallengeValidator):
         # Step 4: verify HTTP 200
         if resp.status != 200:
             msg = f"HTTP-01 validation failed: expected HTTP 200, got {resp.status}"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=True,
@@ -161,6 +167,7 @@ class Http01Validator(ChallengeValidator):
             body = resp.read(_max_bytes)
         except OSError as exc:
             msg = f"HTTP-01 validation failed: error reading response body: {exc}"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=True,
@@ -170,6 +177,7 @@ class Http01Validator(ChallengeValidator):
             body_text = body.decode("utf-8").strip()
         except UnicodeDecodeError as exc:
             msg = f"HTTP-01 validation failed: response body is not valid UTF-8: {exc}"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=False,
@@ -177,6 +185,7 @@ class Http01Validator(ChallengeValidator):
 
         if not secrets.compare_digest(body_text.encode(), expected.encode()):
             msg = "HTTP-01 validation failed: response body does not match key authorization"
+            log.warning(msg)
             raise ChallengeError(
                 msg,
                 retryable=False,

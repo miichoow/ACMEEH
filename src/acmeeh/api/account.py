@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 from uuid import UUID
 
 from flask import Blueprint, g, jsonify, request
@@ -15,6 +16,8 @@ from acmeeh.api.decorators import require_jws
 from acmeeh.api.serializers import serialize_account
 from acmeeh.app.context import get_container
 from acmeeh.app.errors import MALFORMED, AcmeProblem
+
+log = logging.getLogger(__name__)
 
 account_bp = Blueprint("account", __name__)
 
@@ -46,6 +49,8 @@ def new_account():
 
     body = serialize_account(account, contacts, container.urls)
     status = 201 if created else 200
+    if created:
+        log.info("New account created: %s", account.id)
     response = jsonify(body)
     response.status_code = status
     response.headers["Location"] = container.urls.account_url(account.id)
@@ -77,6 +82,7 @@ def update_account(account_id):
 
     # Deactivation
     if payload.get("status") == "deactivated":
+        log.info("Account deactivation requested: %s", account_id)
         account = container.account_service.deactivate(account_id)
         contacts = container.account_contacts.find_by_account(account_id)
         body = serialize_account(account, contacts, container.urls)
