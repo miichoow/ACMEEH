@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Order Quota Exceeded</h2>
+<p>An order creation was rejected because the daily quota has been reached.</p>
+<table>
+  <tr><td><strong>Quota Limit</strong></td><td>{{ quota_limit }} orders per day</td></tr>
+  <tr><td><strong>Attempted Identifiers</strong></td><td>{{ attempted_identifiers | join(', ') }}</td></tr>
+</table>
+<p><small>Reported by {{ server_url }} at {{ timestamp }}</small></p>
+</body>
+</html>

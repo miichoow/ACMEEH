@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from acmeeh.app.errors import MALFORMED, SERVER_INTERNAL, AcmeProblem
 from acmeeh.core.jws import compute_thumbprint
+from acmeeh.core.types import NotificationType
 
 if TYPE_CHECKING:
     from uuid import UUID
@@ -25,8 +26,9 @@ log = logging.getLogger(__name__)
 class KeyChangeService:
     """Manages ACME account key rollover."""
 
-    def __init__(self, account_repo: AccountRepository) -> None:
+    def __init__(self, account_repo: AccountRepository, notifier=None) -> None:
         self._accounts = account_repo
+        self._notifier = notifier
 
     def rollover(
         self,
@@ -90,4 +92,17 @@ class KeyChangeService:
             )
 
         log.info("Key rollover completed for account %s", account_id)
+        if self._notifier:
+            try:
+                self._notifier.notify(
+                    NotificationType.KEY_ROLLOVER_SUCCEEDED,
+                    account_id,
+                    {
+                        "account_id": str(account_id),
+                        "old_thumbprint": old_thumbprint,
+                        "new_thumbprint": new_thumbprint,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("Failed to send KEY_ROLLOVER_SUCCEEDED notification")
         return result

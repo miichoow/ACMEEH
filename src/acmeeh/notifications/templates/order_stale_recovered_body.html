@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Stale Order Recovered</h2>
+<p>An order was stuck in processing state and has been automatically recovered (invalidated).</p>
+<table>
+  <tr><td><strong>Order ID</strong></td><td>{{ order_id }}</td></tr>
+  <tr><td><strong>Domains</strong></td><td>{{ domains | join(', ') }}</td></tr>
+</table>
+<p><small>Reported by {{ server_url }} at {{ timestamp }}</small></p>
+</body>
+</html>

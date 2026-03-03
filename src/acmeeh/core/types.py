@@ -96,6 +96,14 @@ class NotificationType(StrEnum):
     ADMIN_USER_CREATED = "admin_user_created"
     ADMIN_PASSWORD_RESET = "admin_password_reset"
     EXPIRATION_WARNING = "expiration_warning"
+    ORDER_REJECTED = "order_rejected"
+    CHALLENGE_FAILED = "challenge_failed"
+    CSR_VALIDATION_FAILED = "csr_validation_failed"
+    ORDER_STALE_RECOVERED = "order_stale_recovered"
+    ACCOUNT_DEACTIVATED = "account_deactivated"
+    KEY_ROLLOVER_SUCCEEDED = "key_rollover_succeeded"
+    ORDER_QUOTA_EXCEEDED = "order_quota_exceeded"
+    AUTHORIZATION_DEACTIVATED = "authorization_deactivated"
 
 
 class NotificationStatus(StrEnum):

@@ -8,6 +8,7 @@ collected and reported together for better client UX.
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -18,6 +19,8 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from cryptography.x509.oid import ExtendedKeyUsageOID, SignatureAlgorithmOID
 
 from acmeeh.app.errors import BAD_CSR, AcmeProblem
+
+log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from cryptography.hazmat.primitives.asymmetric.types import PublicKeyTypes
@@ -241,6 +244,7 @@ def validate_csr_against_profile(  # noqa: C901, PLR0912, PLR0915
     )
 
     if violations:
+        log.warning("CSR rejected by profile: %s", "; ".join(violations))
         subproblems = [{"type": BAD_CSR, "detail": v} for v in violations]
         raise AcmeProblem(
             BAD_CSR,

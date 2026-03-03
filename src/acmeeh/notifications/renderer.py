@@ -7,12 +7,15 @@ Resolves templates with a two-tier loader:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any
 
 from jinja2 import BaseLoader, ChoiceLoader, Environment, FileSystemLoader, PackageLoader
 
 if TYPE_CHECKING:
     from acmeeh.core.types import NotificationType
+
+log = logging.getLogger(__name__)
 
 
 class TemplateRenderer:
@@ -51,10 +54,14 @@ class TemplateRenderer:
 
         """
         type_name = notification_type.value
-        subject_tpl = self._env.get_template(f"{type_name}_subject.txt")
-        body_tpl = self._env.get_template(f"{type_name}_body.html")
+        try:
+            subject_tpl = self._env.get_template(f"{type_name}_subject.txt")
+            body_tpl = self._env.get_template(f"{type_name}_body.html")
 
-        subject = subject_tpl.render(**context).strip()
-        body = body_tpl.render(**context)
+            subject = subject_tpl.render(**context).strip()
+            body = body_tpl.render(**context)
+        except Exception as exc:
+            log.warning("Failed to render notification template '%s': %s", type_name, exc)
+            raise
 
         return subject, body

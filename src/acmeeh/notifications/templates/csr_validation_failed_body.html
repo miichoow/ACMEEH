@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>CSR Validation Failed</h2>
+<p>The certificate signing request submitted for finalization was rejected.</p>
+<table>
+  <tr><td><strong>Domains</strong></td><td>{{ domains | join(', ') }}</td></tr>
+  <tr><td><strong>Order ID</strong></td><td>{{ order_id }}</td></tr>
+  <tr><td><strong>Error</strong></td><td>{{ error_detail }}</td></tr>
+</table>
+<p><small>Reported by {{ server_url }} at {{ timestamp }}</small></p>
+</body>
+</html>

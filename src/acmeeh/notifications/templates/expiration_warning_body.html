@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Certificate Expiration Warning</h2>
+<p>A certificate is expiring soon and should be renewed.</p>
+<table>
+  <tr><td><strong>Serial Number</strong></td><td>{{ serial_number }}</td></tr>
+  <tr><td><strong>Expires</strong></td><td>{{ not_after }}</td></tr>
+  <tr><td><strong>Days Remaining</strong></td><td>{{ warning_days }}</td></tr>
+  <tr><td><strong>Certificate ID</strong></td><td>{{ certificate_id }}</td></tr>
+</table>
+<p><small>Sent by {{ server_url }} at {{ timestamp }}</small></p>
+</body>
+</html>

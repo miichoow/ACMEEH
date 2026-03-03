@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Authorization Deactivated</h2>
+<p>An authorization has been deactivated by client request.</p>
+<table>
+  <tr><td><strong>Authorization ID</strong></td><td>{{ authorization_id }}</td></tr>
+  <tr><td><strong>Identifier</strong></td><td>{{ identifier_type }}:{{ identifier }}</td></tr>
+  <tr><td><strong>Invalidated Orders</strong></td><td>{{ invalidated_orders }}</td></tr>
+</table>
+<p><small>Reported by {{ server_url }} at {{ timestamp }}</small></p>
+</body>
+</html>

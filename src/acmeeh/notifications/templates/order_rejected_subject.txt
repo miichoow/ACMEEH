@@ -1,0 +1,1 @@
+Order rejected — unauthorized identifier(s): {{ rejected_identifiers | join(', ') }}

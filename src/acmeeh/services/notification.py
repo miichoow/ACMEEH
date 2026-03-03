@@ -77,6 +77,13 @@ class NotificationService:
         if not self._settings.enabled:
             return []
 
+        if notification_type.value in self._settings.disabled_types:
+            log.debug(
+                "Notification type %s is disabled — skipping",
+                notification_type.value,
+            )
+            return []
+
         # Resolve recipients
         recipients = self._resolve_recipients(account_id, explicit_recipients)
         if not recipients:
@@ -97,8 +104,8 @@ class NotificationService:
         # Render template
         subject, body = self._renderer.render(notification_type, context)
 
-        # Process each recipient
-        results: list[Notification] = []
+        # Phase 1: Create all notification records (DB operations)
+        notifications: list[Notification] = []
         for recipient in recipients:
             notification = Notification(
                 id=uuid4(),
@@ -110,27 +117,34 @@ class NotificationService:
                 account_id=account_id,
             )
             self._notifications.create(notification)
+            notifications.append(notification)
 
-            if self._smtp.enabled:
-                success = self._send_email(recipient, subject, body)
-                if success:
-                    updated = self._notifications.mark_sent(notification.id)
-                    if updated:
-                        notification = updated
-                else:
-                    updated = self._notifications.mark_failed(
-                        notification.id,
-                        "SMTP send failed",
-                    )
-                    if updated:
-                        notification = updated
-            else:
+        if not self._smtp.enabled:
+            for n in notifications:
                 log.debug(
                     "SMTP disabled — notification %s recorded but not sent",
-                    notification.id,
+                    n.id,
                 )
+            return notifications
 
-            results.append(notification)
+        # Phase 2: Send all emails (network I/O, no DB connections held)
+        send_results: list[tuple[Notification, bool]] = []
+        for notification in notifications:
+            success = self._send_email(notification.recipient, subject, body)
+            send_results.append((notification, success))
+
+        # Phase 3: Update all statuses (DB operations)
+        results: list[Notification] = []
+        for notification, success in send_results:
+            if success:
+                updated = self._notifications.mark_sent(notification.id)
+                results.append(updated if updated else notification)
+            else:
+                updated = self._notifications.mark_failed(
+                    notification.id,
+                    "SMTP send failed",
+                )
+                results.append(updated if updated else notification)
 
         return results
 
@@ -184,7 +198,13 @@ class NotificationService:
             msg["From"] = self._smtp.from_address
             msg["To"] = recipient
             msg["Subject"] = subject
+            if self._smtp.cc:
+                msg["Cc"] = ", ".join(self._smtp.cc)
             msg.attach(MIMEText(body, "html", "utf-8"))
+
+            envelope_recipients = (
+                [recipient] + list(self._smtp.cc) + list(self._smtp.bcc)
+            )
 
             with smtplib.SMTP(
                 self._smtp.host, self._smtp.port, timeout=self._smtp.timeout_seconds
@@ -197,7 +217,7 @@ class NotificationService:
                     server.login(self._smtp.username, self._smtp.password)
                 server.sendmail(
                     self._smtp.from_address,
-                    [recipient],
+                    envelope_recipients,
                     msg.as_string(),
                 )
 

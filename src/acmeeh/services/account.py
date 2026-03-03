@@ -108,7 +108,36 @@ class AccountService:
         # Check for existing account with same key
         existing = self._accounts.find_by_thumbprint(thumbprint)
         if existing is not None:
+            # Sync EAB-linked permissions on every returning registration
+            # (handles linkage added/changed after initial account creation)
+            if eab_payload is not None and self._eab_repo is not None:
+                try:
+                    eab_kid_existing = self._extract_eab_kid(eab_payload)
+                    if eab_kid_existing:
+                        self._eab_repo.bind_account(
+                            eab_kid_existing,
+                            existing.id,
+                        )
+                except Exception:  # noqa: BLE001
+                    log.debug(
+                        "EAB bind skipped for account %s",
+                        existing.id,
+                        exc_info=True,
+                    )
+            # Always sync EAB→account linkage by account_id so that
+            # profiles/identifiers added to the EAB after registration
+            # are picked up without requiring a new newAccount call.
+            if self._eab_repo is not None:
+                try:
+                    self._eab_repo.sync_linkage_to_account(existing.id)
+                except Exception:  # noqa: BLE001
+                    log.debug(
+                        "EAB linkage sync skipped for account %s",
+                        existing.id,
+                        exc_info=True,
+                    )
             contacts = self._contacts.find_by_account(existing.id)
+            log.debug("Found existing account %s for thumbprint", existing.id)
             return existing, contacts, False
 
         # Enforce TOS agreement
@@ -128,6 +157,11 @@ class AccountService:
         eab_kid = None
         if eab_payload is not None and self._eab_repo is not None:
             eab_kid = self._parse_and_verify_eab(eab_payload, jwk)
+        elif eab_payload is not None and self._eab_required:
+            raise AcmeProblem(
+                EXTERNAL_ACCOUNT_REQUIRED,
+                "EAB credential verification is unavailable",
+            )
 
         # Validate contacts
         try:
@@ -158,9 +192,24 @@ class AccountService:
         )
         self._accounts.create(account)
 
-        # Mark EAB credential as used
-        if eab_kid is not None and self._eab_repo is not None and not self._eab_reusable:
-            self._eab_repo.mark_used(eab_kid, account_id)
+        # Mark EAB credential as used (non-reusable) or bind account (reusable)
+        if eab_kid is not None and self._eab_repo is not None:
+            if not self._eab_reusable:
+                self._eab_repo.mark_used(eab_kid, account_id)
+            else:
+                self._eab_repo.bind_account(eab_kid, account_id)
+
+        # Auto-copy EAB-linked identifiers and CSR profile to the new account
+        if eab_kid is not None and self._eab_repo is not None:
+            try:
+                self._eab_repo.copy_to_account_by_kid(eab_kid, account_id)
+            except Exception:  # noqa: BLE001
+                log.warning(
+                    "Failed to auto-copy EAB linkage for kid=%s to account %s",
+                    eab_kid,
+                    account_id,
+                    exc_info=True,
+                )
 
         # Create contacts
         created_contacts: list[AccountContact] = []
@@ -268,6 +317,19 @@ class AccountService:
             )
         return eab_kid
 
+    @staticmethod
+    def _extract_eab_kid(eab_payload: dict[str, Any]) -> str | None:
+        """Extract the kid from an EAB payload without full verification."""
+        try:
+            inner_header = json.loads(
+                base64.urlsafe_b64decode(
+                    eab_payload.get("protected", "") + "==",
+                ),
+            )
+            return inner_header.get("kid") or None
+        except (ValueError, json.JSONDecodeError):
+            return None
+
     def _notify_registration_failure(
         self,
         contact: list[str],
@@ -362,7 +424,13 @@ class AccountService:
             )
 
         entities = self._validate_and_build_contacts(contacts, account_id)
-        return self._contacts.replace_for_account(account_id, entities)
+        result = self._contacts.replace_for_account(account_id, entities)
+        log.info(
+            "Updated contacts for account %s (%d contacts)",
+            account_id,
+            len(result),
+        )
+        return result
 
     def deactivate(self, account_id: UUID) -> Account:
         """Deactivate an account.
@@ -397,6 +465,7 @@ class AccountService:
             )
 
         # Cascade: deactivate all pending/valid authorizations
+        deactivated_count = 0
         if self._authz_repo is not None:
             deactivated_count = self._authz_repo.deactivate_for_account(account_id)
             if deactivated_count > 0:
@@ -405,6 +474,19 @@ class AccountService:
                     deactivated_count,
                     account_id,
                 )
+
+        if self._notifier:
+            try:
+                self._notifier.notify(
+                    NotificationType.ACCOUNT_DEACTIVATED,
+                    account_id,
+                    {
+                        "account_id": str(account_id),
+                        "deactivated_authorizations": deactivated_count,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("Failed to send ACCOUNT_DEACTIVATED notification")
 
         return result
 

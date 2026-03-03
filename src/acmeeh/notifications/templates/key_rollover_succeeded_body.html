@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Account Key Rollover Succeeded</h2>
+<p>The cryptographic key associated with your ACME account has been changed.</p>
+<table>
+  <tr><td><strong>Account ID</strong></td><td>{{ account_id }}</td></tr>
+  <tr><td><strong>Old Key Thumbprint</strong></td><td>{{ old_thumbprint }}</td></tr>
+  <tr><td><strong>New Key Thumbprint</strong></td><td>{{ new_thumbprint }}</td></tr>
+</table>
+<p><small>Reported by {{ server_url }} at {{ timestamp }}</small></p>
+</body>
+</html>

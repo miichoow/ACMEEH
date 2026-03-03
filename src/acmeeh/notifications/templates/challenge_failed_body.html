@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Challenge Validation Failed</h2>
+<p>A challenge validation has permanently failed for one of your identifiers.</p>
+<table>
+  <tr><td><strong>Identifier</strong></td><td>{{ identifier }}</td></tr>
+  <tr><td><strong>Challenge Type</strong></td><td>{{ challenge_type }}</td></tr>
+  <tr><td><strong>Error</strong></td><td>{{ error_detail }}</td></tr>
+</table>
+<p><small>Reported by {{ server_url }} at {{ timestamp }}</small></p>
+</body>
+</html>

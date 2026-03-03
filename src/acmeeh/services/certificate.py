@@ -74,6 +74,8 @@ class CertificateService:
         db: Database | None = None,
         min_csr_rsa_key_size: int = 2048,
         min_csr_ec_key_size: int = 256,
+        require_csr_profile: bool = False,
+        db_pool_max_connections: int | None = None,
     ) -> None:
         """Initialize the certificate service.
 
@@ -107,6 +109,12 @@ class CertificateService:
             Minimum acceptable RSA key size in bits.
         min_csr_ec_key_size:
             Minimum acceptable EC key size in bits.
+        require_csr_profile:
+            If True, reject CSR finalization when no CSR profile exists
+            for the account.
+        db_pool_max_connections:
+            Maximum number of database pool connections for concurrent
+            signing operations.
 
         """
         self._certs = certificate_repo
@@ -123,6 +131,8 @@ class CertificateService:
         self._db = db
         self._min_csr_rsa_key_size = min_csr_rsa_key_size
         self._min_csr_ec_key_size = min_csr_ec_key_size
+        self._require_csr_profile = require_csr_profile
+        self._db_pool_max_connections = db_pool_max_connections
 
     def finalize_order(  # noqa: C901, PLR0912, PLR0915
         self,
@@ -190,77 +200,23 @@ class CertificateService:
 
         # Parse and validate CSR
         try:
-            csr = x509.load_der_x509_csr(csr_der)
-        except Exception as exc:  # noqa: BLE001
-            self._orders.transition_status(
-                order_id,
-                OrderStatus.PROCESSING,
-                OrderStatus.INVALID,
-                error={
-                    "type": "urn:ietf:params:acme:error:badCSR",
-                    "detail": str(exc),
-                },
-            )
-            security_events.csr_rejected(
-                account_id,
-                f"Cannot parse CSR: {exc}",
-            )
-            raise AcmeProblem(
-                BAD_CSR,
-                f"Cannot parse CSR: {exc}",
-            ) from exc
-
-        # Validate CSR signature
-        if not csr.is_signature_valid:
-            self._orders.transition_status(
-                order_id,
-                OrderStatus.PROCESSING,
-                OrderStatus.INVALID,
-                error={
-                    "type": "urn:ietf:params:acme:error:badCSR",
-                    "detail": "Invalid CSR signature",
-                },
-            )
-            security_events.csr_rejected(
-                account_id,
-                "CSR signature verification failed",
-            )
-            raise AcmeProblem(
-                BAD_CSR,
-                "CSR signature verification failed",
-            )
-
-        # Validate CSR signature algorithm against policy
-        if self._allowed_csr_sig_algs:
-            from acmeeh.services.csr_validator import _SIG_ALG_NAMES  # noqa: PLC0415
-
-            sig_oid = csr.signature_algorithm_oid.dotted_string
-            sig_name = _SIG_ALG_NAMES.get(sig_oid, sig_oid)
-            if sig_name not in self._allowed_csr_sig_algs:
-                detail = f"CSR signature algorithm '{sig_name}' is not allowed"
-                self._orders.transition_status(
-                    order_id,
-                    OrderStatus.PROCESSING,
-                    OrderStatus.INVALID,
-                    error={
-                        "type": ("urn:ietf:params:acme:error:badCSR"),
-                        "detail": detail,
-                    },
-                )
-                security_events.csr_rejected(
-                    account_id,
-                    detail,
-                )
-                raise AcmeProblem(BAD_CSR, detail)
-
-        # Validate CSR key strength against global minimums
-        self._validate_csr_key_strength(csr, order_id, account_id)
-
-        # Validate CSR SANs match order identifiers
-        self._validate_csr_identifiers(csr, order)
-
-        # CSR profile validation
-        self._validate_csr_profile(csr, account_id, order_id)
+            csr = self._parse_and_validate_csr(csr_der, order, order_id, account_id)
+        except AcmeProblem as exc:
+            if exc.error_type == BAD_CSR and self._notifier:
+                try:
+                    domains = [ident.value for ident in order.identifiers]
+                    self._notifier.notify(
+                        NotificationType.CSR_VALIDATION_FAILED,
+                        account_id,
+                        {
+                            "domains": domains,
+                            "order_id": str(order_id),
+                            "error_detail": exc.detail,
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception("Failed to send CSR_VALIDATION_FAILED notification")
+            raise
 
         # CAA validation
         if self._caa is not None:
@@ -720,6 +676,104 @@ class CertificateService:
                 cert_record.serial_number,
                 exc.detail,
             )
+            if self._notifier:
+                self._notifier.notify(
+                    NotificationType.REVOCATION_FAILED,
+                    cert_record.account_id,
+                    {
+                        "serial_number": cert_record.serial_number,
+                        "domains": [],
+                        "reason": reason_str,
+                        "error_detail": exc.detail,
+                    },
+                )
+
+    def _parse_and_validate_csr(  # noqa: C901
+        self,
+        csr_der: bytes,
+        order: Order,
+        order_id: UUID,
+        account_id: UUID,
+    ) -> x509.CertificateSigningRequest:
+        """Parse the CSR and run all validation checks.
+
+        Returns the parsed CSR on success.  Raises ``AcmeProblem``
+        (``BAD_CSR``) on any validation failure.
+        """
+        try:
+            csr = x509.load_der_x509_csr(csr_der)
+        except Exception as exc:  # noqa: BLE001
+            self._orders.transition_status(
+                order_id,
+                OrderStatus.PROCESSING,
+                OrderStatus.INVALID,
+                error={
+                    "type": "urn:ietf:params:acme:error:badCSR",
+                    "detail": str(exc),
+                },
+            )
+            security_events.csr_rejected(
+                account_id,
+                f"Cannot parse CSR: {exc}",
+            )
+            raise AcmeProblem(
+                BAD_CSR,
+                f"Cannot parse CSR: {exc}",
+            ) from exc
+
+        # Validate CSR signature
+        if not csr.is_signature_valid:
+            self._orders.transition_status(
+                order_id,
+                OrderStatus.PROCESSING,
+                OrderStatus.INVALID,
+                error={
+                    "type": "urn:ietf:params:acme:error:badCSR",
+                    "detail": "Invalid CSR signature",
+                },
+            )
+            security_events.csr_rejected(
+                account_id,
+                "CSR signature verification failed",
+            )
+            raise AcmeProblem(
+                BAD_CSR,
+                "CSR signature verification failed",
+            )
+
+        # Validate CSR signature algorithm against policy
+        if self._allowed_csr_sig_algs:
+            from acmeeh.services.csr_validator import _SIG_ALG_NAMES  # noqa: PLC0415
+
+            sig_oid = csr.signature_algorithm_oid.dotted_string
+            sig_name = _SIG_ALG_NAMES.get(sig_oid, sig_oid)
+            if sig_name not in self._allowed_csr_sig_algs:
+                detail = f"CSR signature algorithm '{sig_name}' is not allowed"
+                self._orders.transition_status(
+                    order_id,
+                    OrderStatus.PROCESSING,
+                    OrderStatus.INVALID,
+                    error={
+                        "type": ("urn:ietf:params:acme:error:badCSR"),
+                        "detail": detail,
+                    },
+                )
+                security_events.csr_rejected(
+                    account_id,
+                    detail,
+                )
+                raise AcmeProblem(BAD_CSR, detail)
+
+        # Validate CSR key strength against global minimums
+        self._validate_csr_key_strength(csr, order_id, account_id)
+
+        # Validate CSR SANs match order identifiers
+        self._validate_csr_identifiers(csr, order)
+
+        # CSR profile validation
+        self._validate_csr_profile(csr, account_id, order_id)
+
+        return csr
 
     def _generate_serial(self) -> int:
         """Generate a certificate serial number per configuration.
@@ -747,6 +801,21 @@ class CertificateService:
             account_id,
         )
         if profile is None:
+            if self._require_csr_profile:
+                self._orders.transition_status(
+                    order_id,
+                    OrderStatus.PROCESSING,
+                    OrderStatus.INVALID,
+                    error={
+                        "type": "urn:ietf:params:acme:error:badCSR",
+                        "detail": "No CSR profile assigned to this account",
+                    },
+                )
+                raise AcmeProblem(
+                    BAD_CSR,
+                    "No CSR profile assigned to this account",
+                    403,
+                )
             return
 
         from acmeeh.services.csr_validator import validate_csr_against_profile  # noqa: PLC0415

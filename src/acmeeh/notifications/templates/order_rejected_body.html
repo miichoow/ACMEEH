@@ -1,0 +1,12 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Order Rejected</h2>
+<p>An order was rejected because the account is not authorized to request the following identifier(s).</p>
+<table>
+  <tr><td><strong>Rejected Identifiers</strong></td><td>{{ rejected_identifiers | join(', ') }}</td></tr>
+  <tr><td><strong>Error</strong></td><td>{{ error_detail }}</td></tr>
+</table>
+<p><small>Reported by {{ server_url }} at {{ timestamp }}</small></p>
+</body>
+</html>

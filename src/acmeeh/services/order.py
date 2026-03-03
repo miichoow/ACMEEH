@@ -31,9 +31,9 @@ from acmeeh.core.types import (
     ChallengeStatus,
     ChallengeType,
     IdentifierType,
+    NotificationType,
     OrderStatus,
 )
-from acmeeh.db.unit_of_work import UnitOfWork
 from acmeeh.logging import security_events
 from acmeeh.models.authorization import Authorization
 from acmeeh.models.challenge import Challenge
@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from acmeeh.repositories.authorization import AuthorizationRepository
     from acmeeh.repositories.challenge import ChallengeRepository
     from acmeeh.repositories.order import OrderRepository
+    from acmeeh.services.notification import NotificationService
 
 log = logging.getLogger(__name__)
 
@@ -125,6 +126,7 @@ class OrderService:
         metrics: Any = None,  # noqa: ANN401
         quota_settings: QuotaSettings | None = None,
         rate_limiter: Any = None,  # noqa: ANN401
+        notifier: NotificationService | None = None,
     ) -> None:
         """Initialize the order service with its dependencies."""
         self._orders = order_repo
@@ -139,6 +141,7 @@ class OrderService:
         self._metrics = metrics
         self._quota_settings = quota_settings
         self._rate_limiter = rate_limiter
+        self._notifier = notifier
 
     def create_order(  # noqa: C901, PLR0912, PLR0915
         self,
@@ -181,7 +184,29 @@ class OrderService:
             )
 
         # Quota check
-        self._check_account_quota(account_id)
+        try:
+            self._check_account_quota(account_id)
+        except AcmeProblem:
+            if self._notifier:
+                try:
+                    quota_limit = (
+                        self._quota_settings.max_orders_per_account_per_day
+                        if self._quota_settings
+                        else 0
+                    )
+                    self._notifier.notify(
+                        NotificationType.ORDER_QUOTA_EXCEEDED,
+                        account_id,
+                        {
+                            "quota_limit": quota_limit,
+                            "attempted_identifiers": [
+                                i.get("value", "") for i in identifiers
+                            ],
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception("Failed to send ORDER_QUOTA_EXCEEDED notification")
+            raise
 
         # Parse and validate identifiers
         try:
@@ -228,19 +253,23 @@ class OrderService:
 
         auto_accept = self._challenge_settings.auto_accept
 
-        # Atomic creation: order + authzs + challenges
-        with UnitOfWork(self._db):
-            order, authz_ids = self._create_order_atomic(
-                account_id=account_id,
-                parsed=parsed,
-                id_hash=id_hash,
-                expires=expires,
-                authz_expires=authz_expires,
-                nb=nb,
-                na=na,
-                enabled_types=enabled_types,
-                auto_accept=auto_accept,
-            )
+        # NOTE: Repository methods each acquire their own pool connection
+        # (PyPGKit BaseRepository has no conn= parameter), so wrapping
+        # this in a UnitOfWork would only waste a pool connection without
+        # providing atomicity.  True atomicity would require raw SQL on a
+        # single db.transaction() connection — deferred for a future
+        # refactor.
+        order, authz_ids = self._create_order_atomic(
+            account_id=account_id,
+            parsed=parsed,
+            id_hash=id_hash,
+            expires=expires,
+            authz_expires=authz_expires,
+            nb=nb,
+            na=na,
+            enabled_types=enabled_types,
+            auto_accept=auto_accept,
+        )
 
         log.info(
             "Created order %s with %d identifiers, %d authzs",
@@ -278,6 +307,12 @@ class OrderService:
             since,
         )
         if recent_count >= max_per_day:
+            log.warning(
+                "Account %s quota exceeded: %d orders in last 24h (max %d)",
+                account_id,
+                recent_count,
+                max_per_day,
+            )
             raise AcmeProblem(
                 RATE_LIMITED,
                 f"Account quota exceeded: max {max_per_day} orders per day",
@@ -299,7 +334,7 @@ class OrderService:
     ) -> tuple[Order, list[UUID]]:
         """Create order, authorizations, and challenges atomically.
 
-        Must be called inside a :class:`UnitOfWork` context.
+        Repository calls each use their own pool connection.
         """
         # Check for existing dedup order
         existing = self._orders.find_pending_for_dedup(
@@ -307,6 +342,7 @@ class OrderService:
             id_hash,
         )
         if existing is not None:
+            log.debug("Dedup hit: reusing order %s for account %s", existing.id, account_id)
             authz_ids = self._orders.find_authorization_ids(
                 existing.id,
             )
@@ -772,6 +808,7 @@ class OrderService:
                     }
                     for ident in identifiers
                 ]
+                self._notify_order_rejected(account_id, identifiers)
                 raise AcmeProblem(
                     REJECTED_IDENTIFIER,
                     "Account is not authorized to request the given identifiers",
@@ -796,6 +833,12 @@ class OrderService:
                     rejected.append(ident)
 
         if rejected:
+            log.warning(
+                "Allowlist denied %d identifier(s) for account %s: %s",
+                len(rejected),
+                account_id,
+                [i.value for i in rejected],
+            )
             subproblems = [
                 {
                     "type": REJECTED_IDENTIFIER,
@@ -807,11 +850,31 @@ class OrderService:
                 }
                 for ident in rejected
             ]
+            self._notify_order_rejected(account_id, rejected)
             raise AcmeProblem(
                 REJECTED_IDENTIFIER,
                 f"Account is not authorized to request identifier '{rejected[0].value}'",
                 subproblems=subproblems,
             )
+
+    def _notify_order_rejected(
+        self,
+        account_id: UUID,
+        rejected: list[Identifier],
+    ) -> None:
+        """Send an ORDER_REJECTED notification for denied identifiers."""
+        if self._notifier:
+            try:
+                self._notifier.notify(
+                    NotificationType.ORDER_REJECTED,
+                    account_id,
+                    {
+                        "rejected_identifiers": [ident.value for ident in rejected],
+                        "error_detail": "Account is not authorized to request the given identifiers",
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("Failed to send ORDER_REJECTED notification")
 
 
 def _build_identifiers_from_sans(

@@ -25,6 +25,7 @@ from acmeeh.core.state import log_transition
 from acmeeh.core.types import (
     AuthorizationStatus,
     ChallengeStatus,
+    NotificationType,
     OrderStatus,
 )
 from acmeeh.logging import security_events
@@ -54,6 +55,7 @@ class ChallengeService:
         metrics=None,
         rate_limiter=None,
         challenge_settings=None,
+        notifier=None,
     ) -> None:
         self._challenges = challenge_repo
         self._authz = authz_repo
@@ -63,6 +65,7 @@ class ChallengeService:
         self._metrics = metrics
         self._rate_limiter = rate_limiter
         self._challenge_settings = challenge_settings
+        self._notifier = notifier
 
     def initiate_validation(
         self,
@@ -414,6 +417,20 @@ class ChallengeService:
                     },
                 )
             self._cascade_authz_invalid(challenge.authorization_id)
+            if self._notifier:
+                try:
+                    authz = self._authz.find_by_id(challenge.authorization_id)
+                    self._notifier.notify(
+                        NotificationType.CHALLENGE_FAILED,
+                        authz.account_id if authz else None,
+                        {
+                            "identifier": identifier_value,
+                            "challenge_type": challenge.type.value,
+                            "error_detail": str(exc),
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception("Failed to send CHALLENGE_FAILED notification")
             return result or challenge
 
         finally:
@@ -512,6 +529,20 @@ class ChallengeService:
                 },
             )
         self._cascade_authz_invalid(challenge.authorization_id)
+        if self._notifier:
+            try:
+                authz = self._authz.find_by_id(challenge.authorization_id)
+                self._notifier.notify(
+                    NotificationType.CHALLENGE_FAILED,
+                    authz.account_id if authz else None,
+                    {
+                        "identifier": ctx.get("identifier_value", ""),
+                        "challenge_type": ctx.get("challenge_type", ""),
+                        "error_detail": exc.detail,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("Failed to send CHALLENGE_FAILED notification")
         return result or challenge
 
     # ------------------------------------------------------------------
