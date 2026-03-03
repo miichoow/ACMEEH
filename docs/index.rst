@@ -1,3 +1,4 @@
+====================
 ACMEEH Documentation
 ====================
 
@@ -11,10 +12,10 @@ standards-compliant ACME client (certbot, acme.sh, Caddy, Traefik, etc.).
 Key Features
 ------------
 
-- **4 CA Backends** — Internal file-based CA, external HTTP API, PKCS#11 HSM, or ACME proxy to an upstream CA. Or bring your own with ``ext:`` plugins.
+- **5 CA Backends** — Internal file-based CA, external HTTP API, PKCS#11 HSM, ACME proxy to an upstream CA, or bring your own with ``ext:`` plugins.
 - **3 Challenge Types** — HTTP-01, DNS-01, and TLS-ALPN-01 validation with configurable timeouts, retries, and background workers.
 - **Admin API** — REST API for user management, audit logs, EAB credentials, allowed identifiers, CSR profiles, certificate search, and maintenance mode.
-- **CRL, OCSP & ARI** — Built-in Certificate Revocation Lists, OCSP responder, and ACME Renewal Information (draft-ietf-acme-ari) support.
+- **CRL & ARI** — Built-in Certificate Revocation Lists and ACME Renewal Information (draft-ietf-acme-ari) support.
 - **Hook System** — 10 lifecycle events with pluggable handlers for custom automation on account creation, certificate issuance, revocation, and more.
 - **Security Controls** — Rate limiting, key size policies, identifier allowlists, EAB, CAA enforcement, CSR validation, and per-account quotas.
 - **Prometheus Metrics** — Built-in ``/metrics`` endpoint exposing certificate counts, issuance rates, challenge success/failure, and CA backend health.

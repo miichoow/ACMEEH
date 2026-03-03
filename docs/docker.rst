@@ -1,3 +1,4 @@
+======
 Docker
 ======
 
@@ -88,6 +89,9 @@ passing them to ``docker compose build --build-arg``:
      - ``0``
      - Set to ``1`` to install ``python-pkcs11`` and ``softhsm2`` for
        PKCS#11 / HSM CA backend support
+   * - ``INSTALL_ACME_PROXY``
+     - ``0``
+     - Set to ``1`` to install ``acmeow`` for the ACME proxy CA backend
    * - ``INSTALL_GEVENT``
      - ``0``
      - Set to ``1`` to install ``gevent`` for async workers
@@ -103,17 +107,22 @@ passing them to ``docker compose build --build-arg``:
      - ``1000``
      - GID for the ``acmeeh`` runtime group
 
-Example — build with HSM support:
+Examples — build with optional backends:
 
 .. code-block:: bash
 
+   # HSM support
    docker compose build --build-arg INSTALL_HSM=1
 
-Or set it in your ``.env``:
+   # ACME proxy support
+   docker compose build --build-arg INSTALL_ACME_PROXY=1
+
+Or set them in your ``.env``:
 
 .. code-block:: bash
 
    INSTALL_HSM=1
+   INSTALL_ACME_PROXY=1
 
 Docker Compose Services
 -----------------------
@@ -234,6 +243,26 @@ Server
    * - ``ACMEEH_BASE_PATH``
      - *(empty)*
      - URL path prefix for all endpoints (e.g. ``/acme``)
+   * - ``ACMEEH_CERTS_DIR``
+     - ``./certs``
+     - Host path to CA certificates directory (Compose only)
+
+Reverse Proxy
+^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 20 50
+
+   * - Variable
+     - Default
+     - Description
+   * - ``ACMEEH_FORWARDED_FOR_HEADER``
+     - ``X-Forwarded-For``
+     - Header name for the client IP (set by reverse proxy)
+   * - ``ACMEEH_FORWARDED_PROTO_HEADER``
+     - ``X-Forwarded-Proto``
+     - Header name for the original protocol (``http`` / ``https``)
 
 CA Backend
 ^^^^^^^^^^
@@ -255,9 +284,6 @@ CA Backend
    * - ``CA_ROOT_KEY_PATH``
      - ``/app/certs/root-key.pem``
      - Path to root CA private key (internal backend)
-   * - ``CA_KEY_PROVIDER``
-     - ``file``
-     - Key provider for internal CA
    * - ``CA_SERIAL_SOURCE``
      - ``database``
      - Serial number source (``database`` or ``random``)
@@ -328,6 +354,8 @@ Requires ``INSTALL_HSM=1`` at build time.
 ACME Proxy
 ^^^^^^^^^^
 
+Requires ``INSTALL_ACME_PROXY=1`` at build time.
+
 .. list-table::
    :header-rows: 1
    :widths: 30 20 50
@@ -350,6 +378,16 @@ ACME Proxy
    * - ``CA_PROXY_CHALLENGE_HANDLER``
      - *(empty)*
      - Challenge handler class path
+   * - ``CA_PROXY_EAB_KID``
+     - *(empty)*
+     - EAB Key Identifier for upstream CAs that require External Account
+       Binding (e.g. ZeroSSL)
+   * - ``CA_PROXY_EAB_HMAC_KEY``
+     - *(empty)*
+     - EAB HMAC key (Base64-encoded) for External Account Binding
+   * - ``CA_PROXY_PROXY_URL``
+     - *(empty)*
+     - HTTP proxy URL for outbound connections to the upstream ACME server
 
 Logging
 ^^^^^^^
@@ -433,9 +471,6 @@ Other
    * - ``CRL_PATH``
      - ``/crl``
      - CRL endpoint path
-   * - ``OCSP_PATH``
-     - ``/ocsp``
-     - OCSP endpoint path
    * - ``ARI_PATH``
      - ``/renewalInfo``
      - ARI endpoint path
@@ -448,9 +483,6 @@ Other
    * - ``AUDIT_SYSLOG_HOST``
      - *(empty)*
      - Syslog host for audit event export
-   * - ``ACMEEH_CERTS_DIR``
-     - ``./certs``
-     - Host path to CA certificates directory (Compose only)
 
 Common Operations
 -----------------
@@ -557,9 +589,6 @@ Several subsystems are disabled by default. To enable them, edit
    * - CRL
      - ``crl.enabled``
      - Requires the internal or HSM CA backend
-   * - OCSP
-     - ``ocsp.enabled``
-     - Requires the internal or HSM CA backend
    * - ARI
      - ``ari.enabled``
      - ACME Renewal Information (draft-ietf-acme-ari)
@@ -618,7 +647,7 @@ Production Hardening
   (2--4x cores)
 - Set ``server.max_requests: 1000`` to recycle workers periodically
 - Use ``database`` rate limit backend for multi-instance deployments
-- Enable CRL and/or OCSP for revocation checking
+- Enable CRL for revocation checking
 - Back up the ``acmeeh-pgdata`` volume regularly
 
 Scaling

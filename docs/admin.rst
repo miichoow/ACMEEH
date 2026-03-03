@@ -195,7 +195,7 @@ List all admin users. *admin, auditor*
 **POST** ``/api/users``
 
 Create a new admin user. A password is auto-generated and returned only in this response.
-**required**
+*admin*
 
 **Request body:**
 
@@ -256,7 +256,7 @@ Get a specific user by ID. *admin, auditor*
 **PATCH** ``/api/users/{user_id}``
 
 Update a user. Supports partial updates --- only include the fields you want to change.
-**required**
+*admin*
 
 **Request body (partial update):**
 
@@ -302,7 +302,7 @@ Or update multiple fields at once:
 
 **DELETE** ``/api/users/{user_id}``
 
-Delete a user permanently. **required**
+Delete a user permanently. *admin*
 
 **Response:** ``204 No Content``
 
@@ -362,7 +362,7 @@ immutable and cannot be modified or deleted.
 
 **GET** ``/api/audit-log``
 
-Query the audit log with filtering and cursor-based pagination. **required**
+Query the audit log with filtering and cursor-based pagination. *admin, auditor*
 
 **Query parameters:**
 
@@ -431,7 +431,7 @@ more results are available:
 **POST** ``/api/audit-log/export``
 
 Export audit log entries as an NDJSON (newline-delimited JSON) stream. Supports the same
-filters as the list endpoint. **required**
+filters as the list endpoint. *admin*
 
 **Request body (optional):**
 
@@ -457,12 +457,12 @@ All filter fields are optional. Omit the request body or send ``{}`` to export a
 External Account Binding (EAB)
 ------------------------------
 
-When ``security.eab.enabled`` is ``true``, ACME clients must present a valid
+When ``acme.eab_required`` is ``true``, ACME clients must present a valid
 EAB credential during account registration. Use these endpoints to create, list, and revoke EAB credentials.
 
 **GET** ``/api/eab``
 
-List all EAB credentials. **required**
+List all EAB credentials. *admin*
 
 **Response 200:**
 
@@ -496,7 +496,7 @@ List all EAB credentials. **required**
 **POST** ``/api/eab``
 
 Create a new EAB credential. The ``hmac_key`` is only returned in this response.
-**required**
+*admin*
 
 **Request body:**
 
@@ -536,7 +536,7 @@ Create a new EAB credential. The ``hmac_key`` is only returned in this response.
 **GET** ``/api/eab/{cred_id}``
 
 Get a specific EAB credential. The ``hmac_key`` is never included in this response.
-**required**
+*admin*
 
 **Response 200:**
 
@@ -559,7 +559,7 @@ Get a specific EAB credential. The ``hmac_key`` is never included in this respon
 **POST** ``/api/eab/{cred_id}/revoke``
 
 Revoke an EAB credential so it can no longer be used for account registration.
-Already-bound accounts are not affected. **required**
+Already-bound accounts are not affected. *admin*
 
 **Response 200:**
 
@@ -580,6 +580,103 @@ Already-bound accounts are not affected. **required**
 **Error 404:** EAB credential not found.
 
 
+EAB Allowed Identifiers
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+Associate allowed identifiers with EAB credentials to restrict which identifiers
+an account registered with a given EAB credential may request certificates for.
+
+**GET** ``/api/eab/{cred_id}/allowed-identifiers``
+
+List allowed identifiers associated with an EAB credential. *admin*
+
+**Response 200:**
+
+.. code-block:: json
+
+   [
+     {
+       "id": "ee0e8400-e29b-41d4-a716-446655440040",
+       "identifier_type": "dns",
+       "identifier_value": "*.example.com",
+       "created_by": "550e8400-e29b-41d4-a716-446655440000",
+       "created_at": "2025-06-15T10:00:00Z"
+     }
+   ]
+
+**Error 404:** EAB credential not found.
+
+**PUT** ``/api/eab/{cred_id}/allowed-identifiers/{identifier_id}``
+
+Associate an allowed identifier with an EAB credential. *admin*
+
+**Response:** ``204 No Content``
+
+**Error 404:** EAB credential or identifier not found.
+
+**DELETE** ``/api/eab/{cred_id}/allowed-identifiers/{identifier_id}``
+
+Remove the association between an allowed identifier and an EAB credential. *admin*
+
+**Response:** ``204 No Content``
+
+**Error 404:** EAB credential or identifier not found.
+
+
+EAB CSR Profile
+^^^^^^^^^^^^^^^^
+
+Assign a CSR profile to an EAB credential. Accounts registered with this credential
+will have their certificate requests validated against the assigned profile.
+
+**GET** ``/api/eab/{cred_id}/csr-profile``
+
+Get the CSR profile assigned to an EAB credential. Returns ``null`` if no
+profile is assigned. *admin*
+
+**Response 200 (profile assigned):**
+
+.. code-block:: json
+
+   {
+     "id": "ff0e8400-e29b-41d4-a716-446655440050",
+     "name": "server-tls",
+     "description": "Standard server TLS profile",
+     "profile_data": {
+       "key_usages": ["digital_signature", "key_encipherment"],
+       "extended_key_usages": ["server_auth"],
+       "validity_days": 90
+     },
+     "created_by": "550e8400-e29b-41d4-a716-446655440000",
+     "created_at": "2025-06-15T10:00:00Z",
+     "updated_at": "2025-06-15T10:00:00Z"
+   }
+
+**Response 200 (no profile assigned):**
+
+.. code-block:: json
+
+   null
+
+**Error 404:** EAB credential not found.
+
+**PUT** ``/api/eab/{cred_id}/csr-profile/{profile_id}``
+
+Assign a CSR profile to an EAB credential. *admin*
+
+**Response:** ``204 No Content``
+
+**Error 404:** EAB credential or CSR profile not found.
+
+**DELETE** ``/api/eab/{cred_id}/csr-profile/{profile_id}``
+
+Remove the CSR profile assignment from an EAB credential. *admin*
+
+**Response:** ``204 No Content``
+
+**Error 404:** EAB credential or CSR profile not found.
+
+
 Allowed Identifiers
 -------------------
 
@@ -589,7 +686,7 @@ Identifiers support wildcards (e.g., ``*.example.com``).
 
 **GET** ``/api/allowed-identifiers``
 
-List all allowed identifier entries. **required**
+List all allowed identifier entries. *admin*
 
 **Response 200:**
 
@@ -619,7 +716,7 @@ List all allowed identifier entries. **required**
 
 **POST** ``/api/allowed-identifiers``
 
-Create an allowed identifier entry. **required**
+Create an allowed identifier entry. *admin*
 
 **Request body:**
 
@@ -648,7 +745,7 @@ Create an allowed identifier entry. **required**
 **GET** ``/api/allowed-identifiers/{id}``
 
 Get a specific allowed identifier entry, including associated account IDs.
-**required**
+*admin*
 
 **Response 200:**
 
@@ -671,7 +768,7 @@ Get a specific allowed identifier entry, including associated account IDs.
 **DELETE** ``/api/allowed-identifiers/{id}``
 
 Delete an allowed identifier entry. This cascades to remove all account associations
-for this identifier. **required**
+for this identifier. *admin*
 
 **Response:** ``204 No Content``
 
@@ -680,7 +777,7 @@ for this identifier. **required**
 **PUT** ``/api/allowed-identifiers/{identifier_id}/accounts/{account_id}``
 
 Associate an allowed identifier with an ACME account. After this association, the account
-is permitted to request certificates for this identifier. **required**
+is permitted to request certificates for this identifier. *admin*
 
 **Response:** ``204 No Content``
 
@@ -690,7 +787,7 @@ is permitted to request certificates for this identifier. **required**
 
 Remove the association between an allowed identifier and an ACME account. The account
 will no longer be permitted to request certificates for this identifier.
-**required**
+*admin*
 
 **Response:** ``204 No Content``
 
@@ -698,7 +795,7 @@ will no longer be permitted to request certificates for this identifier.
 
 **GET** ``/api/accounts/{account_id}/allowed-identifiers``
 
-List all allowed identifiers for a specific ACME account. **required**
+List all allowed identifiers for a specific ACME account. *admin*
 
 **Response 200:**
 
@@ -725,7 +822,8 @@ CSR Profiles
 
 Manage certificate profiles that control key usages, extended key usages, validity period, and
 other certificate properties. Profiles can be assigned to ACME accounts to enforce certificate
-policies per account.
+policies per account. Set ``security.require_csr_profile: true`` to reject certificate
+finalization for accounts without an assigned profile (see :ref:`csr-profile-enforcement`).
 
 **GET** ``/api/csr-profiles``
 
@@ -766,7 +864,7 @@ List all CSR profiles. *admin, auditor*
 
 **POST** ``/api/csr-profiles``
 
-Create a new CSR profile. **required**
+Create a new CSR profile. *admin*
 
 **Request body:**
 
@@ -833,7 +931,7 @@ Get a specific CSR profile, including the list of associated account IDs.
 **PUT** ``/api/csr-profiles/{profile_id}``
 
 Update a CSR profile. This is a full replacement --- all fields must be provided.
-**required**
+*admin*
 
 **Request body:**
 
@@ -873,7 +971,7 @@ Update a CSR profile. This is a full replacement --- all fields must be provided
 
 **DELETE** ``/api/csr-profiles/{profile_id}``
 
-Delete a CSR profile. **required**
+Delete a CSR profile. *admin*
 
 **Response:** ``204 No Content``
 
@@ -901,7 +999,7 @@ the profile's requirements, and any violations found.
 **PUT** ``/api/csr-profiles/{profile_id}/accounts/{account_id}``
 
 Assign a CSR profile to an ACME account. The account's certificate requests will be
-validated against this profile. **required**
+validated against this profile. *admin*
 
 **Response:** ``204 No Content``
 
@@ -910,7 +1008,7 @@ validated against this profile. **required**
 **DELETE** ``/api/csr-profiles/{profile_id}/accounts/{account_id}``
 
 Remove a CSR profile assignment from an ACME account. The account will revert to the
-default certificate policy. **required**
+default certificate policy. *admin*
 
 **Response:** ``204 No Content``
 
@@ -1436,7 +1534,7 @@ Look up a certificate by its SHA-256 fingerprint (hex-encoded).
 
 Revoke multiple certificates at once using flexible filter criteria. Supports a dry-run mode
 to preview which certificates would be affected before committing.
-**required**
+*admin*
 
 **Request body:**
 
@@ -1527,7 +1625,7 @@ expiration warnings, revocations, and other administrative events.
 
 **GET** ``/api/notifications``
 
-List notifications with filtering and pagination. **required**
+List notifications with filtering and pagination. *admin*
 
 **Query parameters:**
 
@@ -1554,7 +1652,7 @@ List notifications with filtering and pagination. **required**
    [
      {
        "id": "330e8400-e29b-41d4-a716-446655440080",
-       "notification_type": "certificate_expiring",
+       "notification_type": "expiration_warning",
        "recipient": "admin@example.com",
        "subject": "Certificate expiring: example.com",
        "status": "sent",
@@ -1566,7 +1664,7 @@ List notifications with filtering and pagination. **required**
      },
      {
        "id": "330e8400-e29b-41d4-a716-446655440081",
-       "notification_type": "certificate_revoked",
+       "notification_type": "revocation_succeeded",
        "recipient": "ops@example.com",
        "subject": "Certificate revoked: api.internal.corp",
        "status": "failed",
@@ -1581,7 +1679,7 @@ List notifications with filtering and pagination. **required**
 **POST** ``/api/notifications/retry``
 
 Retry all failed notifications. Resets the retry count and re-queues failed notifications
-for delivery. **required**
+for delivery. *admin*
 
 **Response 200:**
 
@@ -1594,7 +1692,7 @@ for delivery. **required**
 **POST** ``/api/notifications/purge``
 
 Purge old notifications older than the specified number of days.
-**required**
+*admin*
 
 **Request body (optional):**
 
@@ -1626,7 +1724,7 @@ configuration.
 **POST** ``/api/crl/rebuild``
 
 Force an immediate CRL rebuild. Returns the current CRL health status after rebuild.
-**required**
+*admin*
 
 **Response 200:** CRL health status object with details about the rebuilt CRL.
 
@@ -1636,13 +1734,15 @@ Force an immediate CRL rebuild. Returns the current CRL health status after rebu
 Maintenance Mode
 ----------------
 
-Toggle maintenance mode for the ACME server. When maintenance mode is enabled, all ACME protocol
-endpoints return ``503 Service Unavailable``. The Admin API remains accessible during
-maintenance.
+Toggle maintenance mode for the ACME server. When maintenance mode is enabled, new order
+and pre-authorization requests return ``503 Service Unavailable`` with a ``Retry-After``
+header. In-progress operations (order finalization, challenge validation, certificate
+downloads, account operations) are allowed to complete. The Admin API remains accessible
+during maintenance.
 
 **GET** ``/api/maintenance``
 
-Get the current maintenance mode status. **required**
+Get the current maintenance mode status. *admin*
 
 **Response 200:**
 
@@ -1654,9 +1754,10 @@ Get the current maintenance mode status. **required**
 
 **POST** ``/api/maintenance``
 
-Enable or disable maintenance mode. When enabled, all ACME protocol endpoints return
-``503 Service Unavailable`` to clients. The Admin API remains fully accessible.
-**required**
+Enable or disable maintenance mode. When enabled, new order and pre-authorization
+requests return ``503 Service Unavailable`` to clients while in-progress operations
+(order finalization, challenge validation, certificate downloads) are allowed to complete.
+The Admin API remains fully accessible. *admin*
 
 **Request body:**
 

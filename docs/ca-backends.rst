@@ -44,7 +44,7 @@ Abstract Methods (must implement)
 sign(csr, \*, profile, validity_days, serial_number=None, ct_submitter=None) -> IssuedCertificate
 """""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
-Sign a PEM-encoded Certificate Signing Request and return an ``IssuedCertificate``.
+Sign a parsed ``x509.CertificateSigningRequest`` object and return an ``IssuedCertificate``.
 The ``profile`` parameter selects the certificate profile (key usages, extended key usages).
 ``validity_days`` controls the certificate lifetime. ``serial_number`` may be
 pre-assigned by the caller; if ``None``, the backend generates one. ``ct_submitter``
@@ -55,7 +55,7 @@ revoke(\*, serial_number, certificate_pem, reason=None) -> None
 
 Revoke a previously issued certificate. ``serial_number`` is the hex-encoded serial.
 ``certificate_pem`` is the full PEM of the certificate to revoke. ``reason``
-is an optional CRL reason code (integer per RFC 5280, e.g., 0 = unspecified, 1 = keyCompromise).
+is an optional ``RevocationReason`` enum value (per RFC 5280, e.g., ``unspecified``, ``keyCompromise``).
 
 Optional Methods
 ^^^^^^^^^^^^^^^^
@@ -66,6 +66,17 @@ startup_check() -> None
 Called once on application startup to verify backend connectivity and configuration.
 The default implementation is a no-op. Backends should raise ``CAError`` if
 the check fails (e.g., HSM token not reachable, external API unreachable).
+
+deferred (property) -> bool
+"""""""""""""""""""""""""""
+
+Indicates whether ``sign()`` may block for an unbounded amount of time (e.g., waiting
+for upstream DNS propagation or external approval). When a backend returns ``True``,
+the order finalization handler runs ``sign()`` in a background thread and returns
+the order with status ``processing`` (RFC 8555 §7.4) so the HTTP request is not blocked.
+
+The default implementation returns ``False``. The built-in ``acme_proxy`` backend
+overrides this to return ``True``.
 
 IssuedCertificate Dataclass
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -145,7 +156,6 @@ Configuration
        root_cert_path: /etc/acmeeh/ca/root-ca.pem
        root_key_path: /etc/acmeeh/ca/root-ca-key.pem
        chain_path: /etc/acmeeh/ca/chain.pem       # optional intermediate chain
-       key_provider: file                        # key provider type
        serial_source: database                   # database or random
        hash_algorithm: sha256                    # sha256, sha384, sha512
 
@@ -165,9 +175,6 @@ Configuration
    * - ``chain_path``
      - ``null``
      - Optional intermediate certificate chain
-   * - ``key_provider``
-     - ``file``
-     - Key provider type
    * - ``serial_source``
      - ``database``
      - Serial number generation: ``database`` (sequential) or ``random``
@@ -445,6 +452,7 @@ Configuration
          api_token: ${CF_API_TOKEN}
        eab_kid: ${ACME_EAB_KID:-}
        eab_hmac_key: ${ACME_EAB_HMAC:-}
+       proxy_url: null                        # optional HTTP proxy
        verify_ssl: true
        timeout_seconds: 300
 
@@ -497,6 +505,7 @@ Behavioral Notes
 - All operations (sign and revoke) are serialized with a thread lock for safety, since the underlying ACME client library is not thread-safe.
 - Revocation is best-effort: failures are logged but do not raise errors back to the caller.
 - EAB credentials (``eab_kid`` and ``eab_hmac_key``) are configured on the ACMEOW client via ``set_external_account_binding()`` before account registration. If the upstream CA requires EAB, both fields must be set.
+- The ``acme_proxy`` backend sets ``deferred=True``, so order finalization runs ``sign()`` in a background thread. The thread timeout is controlled by ``ca.deferred_signing_timeout`` (default: 600 seconds). This prevents slow upstream CA operations (DNS propagation, approval workflows) from triggering gunicorn worker timeouts.
 
 .. note::
 
@@ -528,19 +537,24 @@ Implementation
    from acmeeh.ca.base import CABackend, IssuedCertificate
 
    class VaultBackend(CABackend):
-       def __init__(self, settings):
-           # settings is the full AcmeehSettings object
+       def __init__(self, ca_settings):
+           # ca_settings is the CASettings object (ca section of config)
+           super().__init__(ca_settings)
            ...
 
-       def sign(self, csr, profile, validity_days, identifiers=None):
+       def sign(self, csr, *, profile, validity_days,
+                serial_number=None, ct_submitter=None):
+           # csr is a parsed x509.CertificateSigningRequest object
            # Sign the CSR and return an IssuedCertificate
            return IssuedCertificate(
-               certificate_pem=cert_pem,
-               chain_pem=chain_pem,
-               serial_number=serial,
+               pem_chain=cert_pem,
+               not_before=not_before,
+               not_after=not_after,
+               serial_number=serial_hex,
+               fingerprint=fingerprint_hex,
            )
 
-       def revoke(self, serial_number, certificate_pem, reason):
+       def revoke(self, *, serial_number, certificate_pem, reason=None):
            # Revoke a certificate
            ...
 
@@ -561,7 +575,6 @@ seconds before attempting recovery.
    ca:
      circuit_breaker_failure_threshold: 5
      circuit_breaker_recovery_timeout: 30
-     half_open_max_calls: 1
 
 State Machine
 ^^^^^^^^^^^^^
@@ -582,7 +595,7 @@ The circuit breaker operates as a three-state machine:
      - Requests fail immediately with a retryable ``CAError`` without contacting the backend.
      - After ``recovery_timeout`` seconds elapse, transitions to **HALF_OPEN**.
    * - **HALF_OPEN**
-     - A limited number of probe requests (controlled by ``half_open_max_calls``, default: 1) are allowed through to test if the backend has recovered.
+     - A single probe request is allowed through to test if the backend has recovered.
      - On success, transitions to **CLOSED** and resets the failure counter. On failure, transitions back to **OPEN**.
 
 .. warning::

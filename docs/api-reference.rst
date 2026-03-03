@@ -149,7 +149,7 @@ List orders for an account (POST-as-GET). Returns a paginated list of order URLs
      - UUID
      - Cursor for pagination. Pass the cursor value from the previous response to fetch the next page of results.
 
-**Response:**
+**Response:** ``200 OK``
 
 .. code-block:: json
 
@@ -326,6 +326,10 @@ Request pre-authorization for an identifier before creating an order.
      "identifier": {"type": "dns", "value": "example.com"}
    }
 
+**Response:** ``201 Created``
+
+Returns the authorization object with its challenges, plus a ``Location`` header pointing to the new authorization URL.
+
 Challenge
 ---------
 
@@ -432,21 +436,6 @@ Download the current CRL in DER format. Requires ``crl.enabled: true``.
 
 **Response:** ``application/pkix-crl``
 
-OCSP (Online Certificate Status Protocol)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-**POST** ``/ocsp``
-
-OCSP request via HTTP POST. Requires ``ocsp.enabled: true``.
-
-**Content-Type:** ``application/ocsp-request``
-
-**Response:** ``application/ocsp-response``
-
-**GET** ``/ocsp/{encoded}``
-
-OCSP request via HTTP GET with base64-encoded request in the URL path.
-
 ARI (ACME Renewal Information)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -462,8 +451,24 @@ Get renewal information for a certificate. Requires ``ari.enabled: true``. Imple
      "suggestedWindow": {
        "start": "2025-03-01T00:00:00Z",
        "end": "2025-03-15T00:00:00Z"
-     }
+     },
+     "retryAfter": 3600
    }
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Field
+     - Description
+   * - ``suggestedWindow.start``
+     - ISO 8601 start of the suggested renewal window
+   * - ``suggestedWindow.end``
+     - ISO 8601 end of the window (equals certificate ``notAfter``)
+   * - ``retryAfter``
+     - Seconds until the renewal window starts (minimum 3600). Clients should retry after this interval.
+
+If the certificate is revoked, the suggested window starts immediately (``start`` is set to the current time).
 
 Metrics
 ^^^^^^^
@@ -541,12 +546,25 @@ Comprehensive health check that inspects all subsystems. Returns ``200 OK`` when
      "shutting_down": false
    }
 
+When the connection pool is exhausted, the database ping is skipped to avoid blocking the health probe:
+
+.. code-block:: json
+
+   {
+     "status": "degraded",
+     "checks": {
+       "database": "pool_exhausted",
+       ...
+     },
+     "shutting_down": false
+   }
+
 .. warning::
 
    **Critical Checks**
 
    The endpoint returns ``503`` with ``"status": "degraded"`` if any of the
-   following critical checks fail: **database**, **CA backend**, or
+   following critical checks fail: **database** (including ``pool_exhausted``), **CA backend**, or
    **CRL freshness** (when CRL is enabled). Non-critical checks (workers, SMTP,
    DNS resolver) are reported but do not affect the HTTP status code.
 
@@ -569,6 +587,16 @@ Kubernetes readiness probe. Indicates whether the server is ready to accept ACME
    {
      "ready": false,
      "reason": "database unavailable"
+   }
+
+When the connection pool is critically exhausted:
+
+.. code-block:: json
+
+   {
+     "ready": false,
+     "reason": "Connection pool exhausted",
+     "pool": {"size": 20, "available": 0, "waiting": 5}
    }
 
 .. tip::
@@ -605,7 +633,7 @@ All responses from the ACMEEH server include the following security headers to p
      - Enforces HTTPS connections. Only sent over HTTPS. The ``max-age`` value is configurable via ``security.hsts_max_age_seconds``.
    * - ``X-Request-ID``
      - ``<uuid>``
-     - Unique UUID generated per request for distributed tracing and log correlation.
+     - Unique identifier for distributed tracing and log correlation. If the client sends an ``X-Request-ID`` header, its value is echoed back; otherwise a new UUID is generated.
 
 Common Response Headers
 -----------------------

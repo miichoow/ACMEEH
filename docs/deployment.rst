@@ -1,3 +1,4 @@
+==========
 Deployment
 ==========
 
@@ -18,7 +19,7 @@ Production Checklist
 - Set ``logging.format: json`` for structured log ingestion
 - Restrict CA private key file permissions to ``0400``
 - Put ACMEEH behind a reverse proxy for TLS termination
-- Enable CRL and/or OCSP for revocation checking
+- Enable CRL for revocation checking
 
 CLI Reference
 -------------
@@ -266,11 +267,25 @@ Deep health check that verifies all subsystems. Returns ``200 OK`` when all comp
      "shutting_down": false
    }
 
+When the connection pool is exhausted (all connections in use), the database check is skipped to avoid blocking the health probe, and the response reports ``"database": "pool_exhausted"`` with ``"status": "degraded"``:
+
+.. code-block:: json
+
+   {
+     "status": "degraded",
+     "checks": {
+       "database": "pool_exhausted",
+       "ca_backend": { "status": "ok" },
+       ...
+     },
+     "shutting_down": false
+   }
+
 .. note::
 
    **503 Triggers**
 
-   The ``/healthz`` endpoint returns 503 if any of the following are unhealthy: ``database``, ``ca_backend``, or ``crl`` (when CRL is enabled and stale). Non-critical subsystems like SMTP and DNS resolver are reported but do not affect the HTTP status code.
+   The ``/healthz`` endpoint returns 503 if any of the following are unhealthy: ``database`` (including ``pool_exhausted``), ``ca_backend``, or ``crl`` (when CRL is enabled and stale). Non-critical subsystems like SMTP and DNS resolver are reported but do not affect the HTTP status code.
 
 GET /readyz --- Readiness Probe
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -285,13 +300,23 @@ Success response:
      "ready": true
    }
 
-Failure response:
+Failure responses:
 
 .. code-block:: json
 
    {
      "ready": false,
      "reason": "database unavailable"
+   }
+
+When the connection pool is critically exhausted:
+
+.. code-block:: json
+
+   {
+     "ready": false,
+     "reason": "Connection pool exhausted",
+     "pool": { "size": 20, "available": 0, "waiting": 5 }
    }
 
 Use this for Kubernetes readiness probes so that traffic is only routed to instances that have completed startup and can serve requests.
@@ -424,6 +449,8 @@ SMTP Configuration
      username: acmeeh@example.com
      password: ${SMTP_PASSWORD}
      from_address: acmeeh@example.com
+     cc: []                                  # addresses CC'd on every notification
+     bcc: []                                  # addresses BCC'd (envelope only)
      timeout_seconds: 30
      templates_path: /etc/acmeeh/templates   # optional custom Jinja2 templates
 
@@ -525,6 +552,41 @@ Database Sizing
 
    Set ``database.max_connections`` to roughly ``server.workers x 2``. PostgreSQL's default ``max_connections`` is 100, which is usually sufficient.
 
+Connection Pool Pressure Guard
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+ACMEEH automatically sheds load when the database connection pool is under pressure using a four-tier model that runs on every request before any database work:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 20 60
+
+   * - Tier
+     - Retry-After
+     - Condition
+   * - **Growth headroom**
+     - (allowed)
+     - Pool has not reached ``max_connections`` --- new connections can be created on demand. No load shedding.
+   * - **Exhausted**
+     - ``5s``
+     - All connections in use (``available=0``), requests are waiting, pool at max. Hard reject with a periodic recovery probe (one request every 2 seconds) to break deadlocks.
+   * - **Critical**
+     - ``3s``
+     - Available connections at or below 30% of pool max (or 10% for pools > 20). Hard reject.
+   * - **Pressure**
+     - ``2s``
+     - Available connections at or below 50% of pool max (or 20% for pools > 20) and requests are waiting. Soft reject.
+
+Health check endpoints (``/livez``, ``/healthz``, ``/readyz``) are always exempt from this guard so that monitoring remains functional even during pool exhaustion.
+
+This is transparent to ACME clients --- well-behaved clients will retry after the ``Retry-After`` delay. If you see frequent 503 responses in logs, increase ``database.max_connections`` or add more ACMEEH instances.
+
+.. note::
+
+   **Recovery Probes**
+
+   When the pool is fully exhausted, the guard periodically allows a single request through (every 2 seconds) to prevent a deadlock where all connections are held by in-flight requests that cannot complete because the guard rejects every new request. This ensures the pool can eventually drain.
+
 Monitoring
 ----------
 
@@ -567,9 +629,9 @@ Scrape ``https://acme.example.com/metrics`` with Prometheus. The following metri
    * - ``acmeeh_orders_created_total``
      - counter
      - Total orders created
-   * - ``acmeeh_challenges_validated_total``
+   * - ``acmeeh_challenges_validated_total{result=...}``
      - counter
-     - Total challenges validated
+     - Challenge validations (labeled: success, retry, failure)
    * - ``acmeeh_challenges_expired_total``
      - counter
      - Total challenges expired
@@ -594,12 +656,9 @@ Scrape ``https://acme.example.com/metrics`` with Prometheus. The following metri
    * - ``acmeeh_ca_signing_errors_total``
      - counter
      - CA signing errors
-   * - ``acmeeh_http_requests_total``
+   * - ``acmeeh_http_requests_total{method,status}``
      - counter
-     - Total HTTP requests
-   * - ``acmeeh_config``
-     - gauge
-     - Configuration info label (always 1)
+     - Total HTTP requests (labeled by method and status code)
 
 Structured Logging
 ^^^^^^^^^^^^^^^^^^
@@ -628,11 +687,11 @@ Multi-Instance Setup
 #. Load balance across instances (round-robin or least-connections)
 #. Use PostgreSQL replication for database HA
 
-.. warning::
+.. note::
 
    **CRL Worker**
 
-   If CRL is enabled, only one instance should run the CRL rebuild worker to avoid conflicts. Use a leader election mechanism or designate one instance as the CRL builder.
+   The CRL rebuild worker, like all background workers, uses PostgreSQL advisory locks for leader election. Only one instance runs the CRL worker at a time, regardless of how many ACMEEH instances are deployed. No additional coordination is needed.
 
 Backup & Recovery
 -----------------

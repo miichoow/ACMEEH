@@ -69,8 +69,11 @@ Install Dependencies
    # ConfigKit (configuration management) & PyPGKit (PostgreSQL ORM layer)
    pip install pyConfigKit PyPGKit
 
-   # Optional: HSM support
+   # Optional: HSM support (PKCS#11 backends)
    pip install python-pkcs11
+
+   # Optional: ACME proxy CA backend
+   pip install acmeow
 
 Set Up PostgreSQL
 -----------------

@@ -23,7 +23,7 @@
 
 ACMEEH is a production-ready ACME server built for organizations that need automated certificate management on their internal network. It fully implements [RFC 8555](https://www.rfc-editor.org/rfc/rfc8555) and is compatible with every standards-compliant ACME client — [certbot](https://certbot.eff.org/), [acme.sh](https://acme.sh/), [Caddy](https://caddyserver.com/), [Traefik](https://traefik.io/), [Lego](https://go-acme.github.io/lego/), and others.
 
-Plug in your own CA — a local root key, an HSM, HashiCorp Vault, or an upstream ACME provider — and ACMEEH handles the rest: challenge validation, certificate issuance, revocation, CRL/OCSP distribution, renewal information, and lifecycle hooks.
+Plug in your own CA — a local root key, an HSM, HashiCorp Vault, or an upstream ACME provider — and ACMEEH handles the rest: challenge validation, certificate issuance, revocation, CRL distribution, renewal information, and lifecycle hooks.
 
 Built with Python 3.12+, Flask, PostgreSQL, and gunicorn.
 
@@ -31,7 +31,7 @@ Built with Python 3.12+, Flask, PostgreSQL, and gunicorn.
 
 - **Pluggable CA Backends** — Internal file-based CA, external HTTP API (Vault, EJBCA), PKCS#11 HSM, ACME proxy to upstream CA, or bring your own with `ext:` plugins. All backends include a circuit breaker for resilience.
 - **Challenge Validation** — HTTP-01, DNS-01, and TLS-ALPN-01 with configurable timeouts, retries, and background validation workers.
-- **Revocation Infrastructure** — Built-in CRL generation, OCSP responder, and ACME Renewal Information (ARI) — each independently toggleable.
+- **Revocation Infrastructure** — Built-in CRL generation and ACME Renewal Information (ARI) — each independently toggleable.
 - **Admin REST API** — Token-authenticated API for user management, audit logs, EAB credentials, identifier allowlists, CSR profiles, certificate search, bulk revocation, and maintenance mode.
 - **Hook System** — 10 lifecycle events (account registration, order creation, challenge validation, certificate issuance/revocation/delivery, CT submission) with pluggable handlers.
 - **Security Controls** — Per-endpoint rate limiting, key size and algorithm policies, identifier allowlists, External Account Binding (EAB), CAA enforcement (RFC 8659), CSR validation profiles, and per-account quotas.
@@ -161,7 +161,8 @@ Optional:
 | Package | Install with | Purpose |
 |---------|-------------|---------|
 | python-pkcs11 | `pip install acmeeh[hsm]` | HSM backend via PKCS#11 |
-| gunicorn | `pip install gunicorn` | Production server (Linux/macOS only) |
+| acmeow | `pip install acmeeh[acme-proxy]` | ACME proxy CA backend |
+| gunicorn | `pip install acmeeh[server]` | Production server (Linux/macOS only) |
 | pytest, pytest-cov | `pip install acmeeh[dev]` | Testing and coverage |
 
 ### Quick Start
@@ -185,7 +186,7 @@ DB_PASSWORD=secret acmeeh -c config.yaml --dev
 
 ## Configuration
 
-ACMEEH uses a single YAML configuration file with 26 settings sections. Only three fields are required:
+ACMEEH uses a single YAML configuration file with 27 settings sections. Only three fields are required:
 
 ```yaml
 server:
@@ -331,9 +332,10 @@ $env:PYTHONPATH = "src"; python -m pytest tests/
 Full documentation is available in the [`docs/`](docs/) folder (Sphinx/reStructuredText, compatible with [Read the Docs](https://readthedocs.org/)):
 
 - [Installation](docs/installation.rst) — Prerequisites, setup, first run
-- [Configuration Reference](docs/configuration.rst) — All 27 settings sections
+- [Configuration Reference](docs/configuration.rst) — All 27 settings sections with defaults
 - [ACME API Reference](docs/api-reference.rst) — RFC 8555 endpoints and JWS auth
 - [CA Backends](docs/ca-backends.rst) — Internal, external, HSM, ACME proxy, custom
+- [Extensibility](docs/extensibility.rst) — Custom validators, hooks, handlers, templates
 - [Admin API](docs/admin.rst) — REST API for server management
 - [Docker](docs/docker.rst) — Dockerfile, Compose, env vars, operations
 - [Deployment](docs/deployment.rst) — Production setup, reverse proxy, monitoring

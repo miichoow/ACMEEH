@@ -836,8 +836,9 @@ Quick reference:
    from acmeeh.ca.base import CABackend, CAError, IssuedCertificate
 
    class MyBackend(CABackend):
-       def __init__(self, settings):
-           # settings is the full AcmeehSettings object
+       def __init__(self, ca_settings):
+           # ca_settings is the CASettings object (ca section of config)
+           super().__init__(ca_settings)
            ...
 
        def sign(self, csr, *, profile, validity_days,
@@ -889,8 +890,23 @@ Each notification type uses two template files:
 
 Available notification types:
 
-- ``expiration_notice``
-- ``certificate_issued``
+- ``delivery_succeeded`` --- Certificate delivered to client
+- ``delivery_failed`` --- Certificate delivery failed
+- ``revocation_succeeded`` --- Certificate revoked successfully
+- ``revocation_failed`` --- Certificate revocation failed
+- ``registration_succeeded`` --- Account registration succeeded
+- ``registration_failed`` --- Account registration failed
+- ``admin_user_created`` --- Admin user created
+- ``admin_password_reset`` --- Admin password reset
+- ``expiration_warning`` --- Certificate expiration warning
+- ``order_rejected`` --- Order rejected by policy
+- ``order_quota_exceeded`` --- Account exceeded order quota
+- ``order_stale_recovered`` --- Stale processing order recovered
+- ``challenge_failed`` --- Challenge validation failed
+- ``csr_validation_failed`` --- CSR validation failed against profile
+- ``account_deactivated`` --- Account deactivated by holder
+- ``key_rollover_succeeded`` --- Account key rollover succeeded
+- ``authorization_deactivated`` --- Authorization deactivated
 
 Configuration
 ^^^^^^^^^^^^^
@@ -903,29 +919,37 @@ Configuration
 Template Variables
 ^^^^^^^^^^^^^^^^^^
 
-Templates receive context variables specific to the notification type. For example,
-the ``expiration_notice`` templates receive:
+All templates receive the common variables ``server_url`` and ``timestamp`` (ISO 8601).
+Additional variables depend on the notification type. For example,
+the ``expiration_warning`` templates receive:
+
+- ``certificate_id`` --- Certificate UUID
+- ``serial_number`` --- Hex-encoded serial number
+- ``not_after`` --- Certificate expiration time (string)
+- ``warning_days`` --- Days until expiration (integer)
+
+The ``delivery_succeeded`` templates receive:
 
 - ``domains`` --- List of domain names on the certificate
 - ``serial_number`` --- Hex-encoded serial number
-- ``not_after`` --- Certificate expiration datetime
-- ``days_remaining`` --- Days until expiration
-- ``account_id`` --- Account UUID
+- ``not_after`` --- Certificate expiration time
+- ``order_id`` --- Order UUID
+- ``certificate_id`` --- Certificate UUID
 
-Example custom subject template (``expiration_notice_subject.txt``):
+Example custom subject template (``expiration_warning_subject.txt``):
 
 .. code-block:: text
 
-   [ACMEEH] Certificate for {{ domains | join(', ') }} expires in {{ days_remaining }} days
+   [ACMEEH] Certificate {{ serial_number }} expires in {{ warning_days }} days
 
-Example custom body template (``expiration_notice_body.html``):
+Example custom body template (``expiration_warning_body.html``):
 
 .. code-block:: html
 
    <h2>Certificate Expiration Warning</h2>
-   <p>The certificate for <strong>{{ domains | join(', ') }}</strong>
-      (serial: {{ serial_number }}) expires on {{ not_after.strftime('%Y-%m-%d') }}.</p>
-   <p>{{ days_remaining }} days remaining. Please renew.</p>
+   <p>Certificate <strong>{{ serial_number }}</strong> expires on {{ not_after }}.</p>
+   <p>{{ warning_days }} days remaining. Please renew.</p>
+   <p><small>Sent by {{ server_url }} at {{ timestamp }}</small></p>
 
 Packaging and Distribution
 --------------------------

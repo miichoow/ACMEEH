@@ -19,7 +19,8 @@ Project Structure
    │       ├── ca.py            # ca test-sign
    │       ├── crl.py           # crl rebuild
    │       ├── db.py            # db status, db migrate
-   │       └── inspect.py       # inspect order/certificate/account
+   │       ├── inspect.py       # inspect order/certificate/account
+   │       └── serve.py         # serve (start server)
    ├── config/
    │   ├── __init__.py          # Exports AcmeehConfig, get_config
    │   ├── acmeeh_config.py     # ConfigKit subclass
@@ -28,11 +29,15 @@ Project Structure
    ├── app/
    │   ├── factory.py           # create_app(config, database)
    │   ├── context.py           # DI container: get_container()
-   │   └── errors.py            # AcmeProblem exception
+   │   ├── errors.py            # AcmeProblem exception
+   │   ├── middleware.py         # Request/response middleware
+   │   ├── rate_limiter.py      # Per-endpoint rate limiting
+   │   └── shutdown.py          # Graceful shutdown handler
    ├── core/
    │   ├── types.py             # Enums: OrderStatus, ChallengeType, etc.
    │   ├── state.py             # State machine transitions
-   │   └── jws.py               # JWS/JWK/JWK Thumbprint (RFC 7515/7517/7638)
+   │   ├── jws.py               # JWS/JWK/JWK Thumbprint (RFC 7515/7517/7638)
+   │   └── urls.py              # URL builder utilities
    ├── api/
    │   ├── __init__.py          # register_blueprints()
    │   ├── directory.py         # GET /directory
@@ -45,22 +50,20 @@ Project Structure
    │   ├── key_change.py        # POST /key-change
    │   ├── new_authz.py         # POST /new-authz
    │   ├── crl.py               # GET /crl (optional)
-   │   ├── ocsp.py              # POST/GET /ocsp (optional)
    │   ├── renewal_info.py      # GET /renewalInfo/{id} (optional)
    │   ├── metrics.py           # GET /metrics (optional)
+   │   ├── serializers.py       # JSON serialization helpers
    │   └── decorators.py        # ACME response headers
    ├── models/                  # Frozen dataclass models
    │   ├── account.py
    │   ├── authorization.py
    │   ├── certificate.py
    │   ├── challenge.py
-   │   ├── identifier.py
    │   ├── nonce.py
    │   ├── notification.py
    │   └── order.py
    ├── repositories/            # BaseRepository[T] subclasses
    │   ├── account.py
-   │   ├── account_contact.py
    │   ├── authorization.py
    │   ├── certificate.py
    │   ├── challenge.py
@@ -68,37 +71,73 @@ Project Structure
    │   ├── notification.py
    │   └── order.py
    ├── services/                # Business logic
-   │   ├── account.py
-   │   ├── authorization.py
-   │   ├── certificate.py
-   │   ├── challenge.py
-   │   ├── key_change.py
-   │   ├── nonce.py
-   │   ├── notification.py
-   │   └── order.py
+   │   ├── account.py           # Account creation, update, deactivation
+   │   ├── authorization.py     # Authorization lifecycle
+   │   ├── certificate.py       # Certificate issuance and revocation
+   │   ├── challenge.py         # Challenge creation and validation
+   │   ├── cleanup_worker.py    # Nonce GC, order expiry, data retention
+   │   ├── csr_validator.py     # CSR validation against profiles
+   │   ├── expiration_worker.py # Certificate expiration warnings
+   │   ├── key_change.py        # Account key rollover
+   │   ├── nonce.py             # Nonce generation and tracking
+   │   ├── notification.py      # Email notifications with retry
+   │   ├── order.py             # Order creation and finalization
+   │   ├── renewal_info.py      # ARI renewal information
+   │   └── workers.py           # Worker orchestrator (starts background threads)
    ├── ca/                      # CA backends
-   │   ├── base.py              # CABackend ABC, IssuedCertificate
+   │   ├── base.py              # CABackend ABC, IssuedCertificate, CAError
    │   ├── registry.py          # Backend loader/registry
    │   ├── internal.py          # File-based CA
    │   ├── external.py          # HTTP API CA
    │   ├── hsm.py               # PKCS#11 HSM CA
-   │   └── acme_proxy.py        # Upstream ACME CA
+   │   ├── acme_proxy.py        # Upstream ACME CA
+   │   ├── failover.py          # Multi-backend failover wrapper
+   │   ├── circuit_breaker.py   # Circuit breaker for CA backends
+   │   ├── crl.py               # CRL generation and management
+   │   ├── ct.py                # Certificate Transparency submission
+   │   ├── caa.py               # CAA record checking
+   │   ├── cert_utils.py        # Certificate parsing utilities
+   │   └── upstream_handlers.py # Challenge handlers for ACME proxy
    ├── challenge/               # Challenge validators
+   │   ├── base.py              # ChallengeValidator ABC
+   │   ├── registry.py          # Validator registry
+   │   ├── http01.py            # HTTP-01 validator
+   │   ├── dns01.py             # DNS-01 validator
+   │   ├── tls_alpn01.py        # TLS-ALPN-01 validator
+   │   └── auto_accept.py       # Auto-accept validator (for ACME proxy)
    ├── hooks/                   # Hook system
    │   ├── base.py              # Hook ABC
-   │   └── events.py            # Event definitions
+   │   ├── events.py            # Event definitions
+   │   ├── registry.py          # Hook registry and dispatcher
+   │   ├── ct_hook.py           # CT log submission hook
+   │   └── audit_export_hook.py # Audit event export hook
    ├── admin/                   # Admin API
-   │   ├── routes.py            # Flask blueprint
-   │   ├── auth.py              # JWT auth, rate limiting
+   │   ├── routes.py            # Flask blueprint (49 endpoints)
+   │   ├── auth.py              # JWT auth, token blacklist, rate limiting
    │   ├── service.py           # AdminUserService
+   │   ├── repository.py        # Admin repositories (users, audit, EAB, etc.)
+   │   ├── models.py            # Admin data models
    │   ├── serializers.py       # JSON serializers
-   │   └── pagination.py        # Cursor-based pagination
+   │   ├── pagination.py        # Cursor-based pagination
+   │   └── password.py          # Password hashing and generation
    ├── notifications/           # Email notification system
+   │   ├── renderer.py          # Jinja2 template rendering
+   │   └── templates/           # 17 notification type templates
+   ├── logging/                 # Logging and audit
+   │   ├── setup.py             # Log configuration (JSON/human format)
+   │   ├── sanitize.py          # Log message sanitization
+   │   ├── security_events.py   # Security event logging
+   │   └── audit_cleanup.py     # Audit log retention cleanup
    ├── metrics/                 # Prometheus metrics
-   ├── logging/                 # Structured logging setup
-   ├── server/                  # Gunicorn app wrapper
+   │   └── collector.py         # Metric definitions and collector
+   ├── server/                  # WSGI server
+   │   ├── gunicorn_app.py      # Custom gunicorn application class
+   │   └── wsgi.py              # WSGI entry point (ACMEEH_CONFIG env)
    └── db/
-       └── schema.sql           # Database schema
+       ├── __init__.py          # Database initialization
+       ├── init.py              # Schema auto-setup
+       ├── unit_of_work.py      # Transaction unit of work
+       └── schema.sql           # PostgreSQL schema
 
 Running Tests
 -------------
@@ -149,57 +188,8 @@ Hook System
 
 ACMEEH has a pluggable hook system that fires on lifecycle events. Hooks run asynchronously in a thread pool and don't block the request.
 
-Available Events
-^^^^^^^^^^^^^^^^
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 25 25 30
-
-   * - Event
-     - Method
-     - Fires When
-     - Context Keys
-   * - ``account.registration``
-     - ``on_account_registration``
-     - New account is created
-     - ``account_id``, ``contacts``, ``jwk_thumbprint``, ``tos_agreed``
-   * - ``order.creation``
-     - ``on_order_creation``
-     - New order is submitted
-     - ``order_id``, ``account_id``, ``identifiers``, ``authz_ids``
-   * - ``challenge.before_validate``
-     - ``on_challenge_before_validate``
-     - Before challenge validation starts
-     - ``challenge_type``, ``token``, ``identifier_type``, ``identifier_value``
-   * - ``challenge.after_validate``
-     - ``on_challenge_after_validate``
-     - After successful validation
-     - ``challenge_type``, ``token``, ``identifier_type``, ``identifier_value``, ``result``
-   * - ``challenge.on_failure``
-     - ``on_challenge_failure``
-     - Challenge validation fails terminally
-     - ``challenge_type``, ``token``, ``identifier_type``, ``identifier_value``, ``error``
-   * - ``challenge.on_retry``
-     - ``on_challenge_retry``
-     - Challenge validation fails, will retry
-     - ``challenge_type``, ``token``, ``identifier_type``, ``identifier_value``, ``error``, ``retry_count``
-   * - ``certificate.issuance``
-     - ``on_certificate_issuance``
-     - Certificate is issued
-     - ``certificate_id``, ``order_id``, ``account_id``, ``serial_number``, ``domains``, ``not_after``
-   * - ``certificate.revocation``
-     - ``on_certificate_revocation``
-     - Certificate is revoked
-     - ``certificate_id``, ``account_id``, ``serial_number``, ``reason``
-   * - ``certificate.delivery``
-     - ``on_certificate_delivery``
-     - Certificate is downloaded
-     - ``certificate_id``, ``account_id``, ``serial_number``
-   * - ``ct.submission``
-     - ``on_ct_submission``
-     - Certificate submitted to CT log
-     - ``certificate_id``, ``serial_number``, ``ct_log_url``, ``sct``
+For the full list of available events, context keys, and configuration options,
+see the :doc:`extensibility` guide.
 
 Writing a Hook
 ^^^^^^^^^^^^^^
@@ -223,7 +213,7 @@ All custom hooks must inherit from ``Hook`` and override the event methods they 
 
        def on_certificate_issuance(self, ctx: dict):
            # ctx contains: certificate_id, order_id, account_id,
-           #   serial_number, domains, not_after
+           #   serial_number, domains, not_after, pem_chain
            domains = ctx["domains"]
            serial = ctx["serial_number"]
            # POST to Slack webhook...
@@ -233,19 +223,15 @@ All custom hooks must inherit from ``Hook`` and override the event methods they 
            #   serial_number, reason
            ...
 
-Register the hook in config:
+Register the hook in config (see :doc:`extensibility` for the full YAML schema and
+additional examples):
 
 .. code-block:: yaml
 
    hooks:
-     timeout_seconds: 30
-     max_workers: 4
      registered:
        - class: my_hooks.SlackNotifier
-         enabled: true
-         events:
-           - certificate.issuance
-           - certificate.revocation
+         events: [certificate.issuance, certificate.revocation]
          config:
            webhook_url: https://hooks.slack.com/...
 
@@ -358,6 +344,14 @@ NotificationType
 - ``registration_succeeded``, ``registration_failed`` --- Account registration events
 - ``admin_user_created``, ``admin_password_reset`` --- Admin user events
 - ``expiration_warning`` --- Certificate expiration warning
+- ``order_rejected`` --- Order rejected by policy
+- ``order_quota_exceeded`` --- Account exceeded order quota
+- ``order_stale_recovered`` --- Stale processing order recovered
+- ``challenge_failed`` --- Challenge validation failed
+- ``csr_validation_failed`` --- CSR validation failed against profile
+- ``account_deactivated`` --- Account deactivated by holder
+- ``key_rollover_succeeded`` --- Account key rollover succeeded
+- ``authorization_deactivated`` --- Authorization deactivated
 
 AdminRole
 ^^^^^^^^^
@@ -397,56 +391,7 @@ Challenge validators live in ``challenge/`` and implement the validation logic f
 CLI Commands Reference
 ----------------------
 
-.. list-table::
-   :header-rows: 1
-   :widths: 40 60
-
-   * - Command
-     - Description
-   * - ``acmeeh -c config.yaml``
-     - Start the server (default command)
-   * - ``acmeeh -c config.yaml serve``
-     - Explicit serve command
-   * - ``acmeeh -c config.yaml serve --dev``
-     - Start Flask development server
-   * - ``acmeeh -c config.yaml --validate-only``
-     - Validate config and exit
-   * - ``acmeeh -c config.yaml db status``
-     - Check database connectivity
-   * - ``acmeeh -c config.yaml db migrate``
-     - Run database migrations
-   * - ``acmeeh -c config.yaml ca test-sign``
-     - Test CA signing with ephemeral CSR
-   * - ``acmeeh -c config.yaml crl rebuild``
-     - Force CRL rebuild
-   * - ``acmeeh -c config.yaml admin create-user``
-     - Create admin user (--username, --email, --role)
-   * - ``acmeeh -c config.yaml inspect order {id}``
-     - Inspect an order by UUID
-   * - ``acmeeh -c config.yaml inspect certificate {id}``
-     - Inspect a certificate by UUID or serial
-   * - ``acmeeh -c config.yaml inspect account {id}``
-     - Inspect an account by UUID
-
-Global Flags
-^^^^^^^^^^^^
-
-.. list-table::
-   :header-rows: 1
-   :widths: 30 70
-
-   * - Flag
-     - Description
-   * - ``-c, --config PATH``
-     - Path to configuration file (required)
-   * - ``--debug``
-     - Enable debug output (full tracebacks)
-   * - ``--dev``
-     - Use Flask dev server instead of gunicorn
-   * - ``--validate-only``
-     - Validate config and exit
-   * - ``-v, --version``
-     - Show version and exit
+See :doc:`deployment` for the full CLI reference (subcommands and global flags).
 
 Code Conventions
 ----------------

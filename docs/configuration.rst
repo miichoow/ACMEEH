@@ -1,3 +1,4 @@
+=======================
 Configuration Reference
 =======================
 
@@ -19,6 +20,12 @@ Use ``${VAR}`` or ``${VAR:-default}`` syntax anywhere in the YAML to reference e
      host: ${DB_HOST:-localhost}
 
 Variables are resolved during config loading in ``additional_checks()``. If a variable is missing and has no default, config loading fails with a clear error.
+
+.. tip::
+
+   **Inline Comments**
+
+   Add a ``_comment`` field (string or array of strings) at the top level of your YAML for in-file documentation. It is ignored by the server.
 
 Settings Sections
 -----------------
@@ -109,6 +116,12 @@ Reverse proxy configuration for extracting real client IP and protocol.
      - ``X-Forwarded-Proto``
      - Header containing original protocol
 
+.. note::
+
+   **X-Forwarded-Prefix**
+
+   The middleware also handles ``X-Forwarded-Prefix`` automatically (not configurable). When present on a trusted request, its value is used as the WSGI ``SCRIPT_NAME`` to support reverse proxies that mount ACMEEH under a sub-path.
+
 security
 --------
 
@@ -158,6 +171,10 @@ Cryptographic policies, rate limiting, and identifier restrictions.
      - integer
      - ``63072000``
      - HSTS header max-age in seconds
+   * - ``require_csr_profile``
+     - boolean
+     - ``false``
+     - Require every account to have a CSR profile assigned before certificate finalization. See :ref:`csr-profile-enforcement`.
 
 security.rate_limits
 ^^^^^^^^^^^^^^^^^^^^
@@ -542,11 +559,42 @@ Certificate Authority settings. See :doc:`ca-backends` for detailed backend conf
      - float
      - ``30``
      - Seconds before circuit half-opens
+   * - ``deferred_signing_timeout``
+     - integer
+     - ``600``
+     - Timeout in seconds for deferred (background thread) signing. Used by backends where ``deferred=True`` (e.g., ``acme_proxy``).
 
 ca.profiles
 ^^^^^^^^^^^
 
-Named certificate profiles. A ``default`` profile is always present.
+Named certificate profiles. A ``default`` profile is always present. Each profile supports:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 15 55
+
+   * - Field
+     - Type
+     - Default
+     - Description
+   * - ``key_usages``
+     - array
+     - ``[]``
+     - Key Usage extension values (e.g., ``digital_signature``, ``key_encipherment``)
+   * - ``extended_key_usages``
+     - array
+     - ``[]``
+     - Extended Key Usage values (e.g., ``server_auth``, ``client_auth``)
+   * - ``validity_days``
+     - integer
+     - ``null``
+     - Override ``ca.default_validity_days`` for this profile
+   * - ``max_validity_days``
+     - integer
+     - ``null``
+     - Override ``ca.max_validity_days`` for this profile
+
+Example:
 
 .. code-block:: yaml
 
@@ -600,16 +648,20 @@ PostgreSQL connection settings.
      - PostgreSQL SSL mode
    * - ``min_connections``
      - integer
-     - ``2``
+     - ``5``
      - Minimum pool connections
    * - ``max_connections``
      - integer
-     - ``10``
+     - ``50``
      - Maximum pool connections
    * - ``connection_timeout``
      - float
-     - ``30.0``
+     - ``10.0``
      - Connection timeout in seconds
+   * - ``max_idle_seconds``
+     - float
+     - ``300.0``
+     - Maximum time (seconds) a connection can remain idle in the pool before being closed
    * - ``auto_setup``
      - boolean
      - ``false``
@@ -724,6 +776,14 @@ smtp
      - string
      - ``""``
      - Sender email address
+   * - ``cc``
+     - list[string]
+     - ``[]``
+     - CC recipients added to every outgoing notification
+   * - ``bcc``
+     - list[string]
+     - ``[]``
+     - BCC recipients added to every outgoing notification (envelope only, not in headers)
    * - ``templates_path``
      - string
      - ``null``
@@ -751,7 +811,7 @@ logging
    * - ``format``
      - string
      - ``json``
-     - Log format: ``json`` or ``text``
+     - Log format: ``json`` or ``human``
 
 logging.audit
 ^^^^^^^^^^^^^
@@ -832,11 +892,24 @@ notifications
      - integer
      - ``3600``
      - Maximum retry delay
+   * - ``disabled_types``
+     - string[]
+     - ``[]``
+     - Notification types to suppress. Valid values:
+       ``delivery_succeeded``, ``delivery_failed``,
+       ``revocation_succeeded``, ``revocation_failed``,
+       ``registration_succeeded``, ``registration_failed``,
+       ``admin_user_created``, ``admin_password_reset``,
+       ``expiration_warning``, ``order_rejected``,
+       ``challenge_failed``, ``csr_validation_failed``,
+       ``order_stale_recovered``, ``account_deactivated``,
+       ``key_rollover_succeeded``, ``order_quota_exceeded``,
+       ``authorization_deactivated``
 
 hooks
 -----
 
-Lifecycle hook configuration. See `Development: Hooks <development.html#hooks>`_ for writing custom hooks.
+Lifecycle hook configuration. See :ref:`hooks` in the Development guide for writing custom hooks.
 
 .. list-table::
    :header-rows: 1
@@ -866,31 +939,8 @@ Lifecycle hook configuration. See `Development: Hooks <development.html#hooks>`_
 hooks.registered[]
 ^^^^^^^^^^^^^^^^^^
 
-.. code-block:: yaml
-
-   hooks:
-     registered:
-       - class: my_hooks.SlackNotifier
-         enabled: true
-         events:
-           - certificate.issuance
-           - certificate.revocation
-         timeout_seconds: 10
-         config:
-           webhook_url: https://hooks.slack.com/...
-
-Available events:
-
-- ``account.registration``
-- ``order.creation``
-- ``challenge.before_validate``
-- ``challenge.after_validate``
-- ``challenge.on_failure``
-- ``challenge.on_retry``
-- ``certificate.issuance``
-- ``certificate.revocation``
-- ``certificate.delivery``
-- ``ct.submission``
+See :doc:`extensibility` for the full list of hook events, configuration fields,
+and a complete YAML example.
 
 nonce
 -----
@@ -921,8 +971,8 @@ nonce
      - Log consumed nonces in audit trail
    * - ``max_age_seconds``
      - integer
-     - ``300``
-     - Max age for nonce reuse
+     - ``min(expiry_seconds, 300)``
+     - Max age for nonce reuse. Defaults to the lesser of ``expiry_seconds`` and 300.
 
 order
 -----
@@ -1131,6 +1181,8 @@ Certificate Transparency log submission.
 ct_logging.logs[]
 ^^^^^^^^^^^^^^^^^^
 
+Each entry in the ``logs`` array defines a Certificate Transparency log to submit to:
+
 .. code-block:: yaml
 
    ct_logging:
@@ -1139,6 +1191,27 @@ ct_logging.logs[]
        - url: https://ct.example.com/log
          public_key_path: /path/to/ct-log-key.pem
          timeout_seconds: 10
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 15 55
+
+   * - Field
+     - Type
+     - Default
+     - Description
+   * - ``url``
+     - string
+     - **required**
+     - CT log submission URL
+   * - ``public_key_path``
+     - string
+     - ``null``
+     - Path to the CT log's public key (PEM). Used for SCT verification.
+   * - ``timeout_seconds``
+     - integer
+     - ``10``
+     - HTTP request timeout for CT log submission
 
 audit_retention
 ---------------
@@ -1189,34 +1262,6 @@ ACME Renewal Information (draft-ietf-acme-ari).
      - string
      - ``/renewalInfo``
      - ARI endpoint path
-
-ocsp
-----
-
-.. list-table::
-   :header-rows: 1
-   :widths: 20 10 15 55
-
-   * - Field
-     - Type
-     - Default
-     - Description
-   * - ``enabled``
-     - boolean
-     - ``false``
-     - Enable OCSP responder
-   * - ``path``
-     - string
-     - ``/ocsp``
-     - OCSP endpoint path
-   * - ``response_validity_seconds``
-     - integer
-     - ``86400``
-     - OCSP response validity period
-   * - ``hash_algorithm``
-     - string
-     - ``sha256``
-     - OCSP response hash algorithm
 
 audit_export
 ------------
@@ -1351,6 +1396,8 @@ Warnings (logged, non-fatal)
      - Generated passwords will only be printed to stdout/log
    * - ``security.identifier_policy.enforce_account_allowlist=true`` but ``admin_api.enabled=false``
      - Cannot manage allowlists without admin API
+   * - ``security.require_csr_profile=true`` but ``admin_api.enabled=false``
+     - CSR profiles cannot be managed without admin API
    * - ``acme.eab_reusable=true`` but ``acme.eab_required=false``
      - EAB reusability has no effect when EAB is not required
    * - ``security.rate_limits.backend=memory`` with ``server.workers`` > 1
@@ -1367,6 +1414,52 @@ Warnings (logged, non-fatal)
      - CRL generation requires access to the CA signing key
    * - Hook ``timeout_seconds`` > ``server.timeout``
      - Hook execution may outlive the HTTP request
+
+.. _csr-profile-enforcement:
+
+CSR Profile Enforcement
+-----------------------
+
+When ``security.require_csr_profile`` is ``true``, every ACME account **must** have a
+CSR profile assigned before it can finalize an order. If an account has no profile,
+the finalize request is rejected with a ``badCSR`` error.
+
+This pairs naturally with EAB-based enrollment: assign a CSR profile to each EAB
+credential, and when a client registers using that credential, the profile is
+automatically copied to the new account.
+
+**Recommended setup:**
+
+.. code-block:: yaml
+
+   acme:
+     eab_required: true
+
+   security:
+     require_csr_profile: true
+
+   admin_api:
+     enabled: true
+     token_secret: ${ADMIN_TOKEN_SECRET}
+     initial_admin_email: admin@example.com
+     base_path: /admin
+
+**Workflow:**
+
+1. An admin creates a CSR profile via ``POST /admin/csr-profiles``
+2. The admin assigns it to an EAB credential via ``PUT /admin/eab/{eab_id}/csr-profile/{profile_id}``
+3. A client registers with the EAB credential --- the profile is copied to the new account
+4. All certificate orders from that account are validated against the profile
+
+Accounts without a profile receive a ``badCSR`` error at finalization with the detail
+*"No CSR profile assigned to this account"*.
+
+.. note::
+
+   The ``admin_api.enabled`` option must be ``true`` for CSR profile management. If
+   ``require_csr_profile`` is ``true`` but the admin API is disabled, a configuration
+   warning is logged at startup and all finalization requests will fail.
+
 
 Full Configuration Example
 --------------------------
@@ -1460,6 +1553,8 @@ A comprehensive configuration file showing all commonly used sections:
      username: ${SMTP_USER}
      password: ${SMTP_PASSWORD}
      from_address: acmeeh@example.com
+     cc: []
+     bcc: []
 
    notifications:
      enabled: true
@@ -1473,9 +1568,6 @@ A comprehensive configuration file showing all commonly used sections:
        file: /var/log/acmeeh/audit.log
 
    crl:
-     enabled: true
-
-   ocsp:
      enabled: true
 
    metrics:
