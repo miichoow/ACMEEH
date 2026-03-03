@@ -14,7 +14,6 @@ Usage::
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import threading
 import time
@@ -43,7 +42,7 @@ class _CleanupTask:
         self,
         name: str,
         interval_seconds: int,
-        func: Callable[[], None],
+        func: Callable,
     ) -> None:
         """Initialise a cleanup task with its name, interval, and callable."""
         self.name = name
@@ -56,10 +55,10 @@ class _CleanupTask:
         """Return whether the task is due based on elapsed time."""
         return (now - self._last_run) >= self.interval_seconds
 
-    def run(self, now: float) -> None:
+    def run(self, now: float, conn=None) -> None:
         """Execute the task and record the current time as last run."""
         self._last_run = now
-        self.func()
+        self.func(conn)
 
 
 class CleanupWorker:
@@ -80,6 +79,7 @@ class CleanupWorker:
         db_rate_limiter: DatabaseRateLimiter | None = None,
         db: Any = None,
         metrics: Any = None,
+        notifier: Any = None,
     ) -> None:
         """Initialise the cleanup worker and register applicable tasks."""
         self._tasks: list[_CleanupTask] = []
@@ -87,6 +87,7 @@ class CleanupWorker:
         self._thread: threading.Thread | None = None
         self._metrics = metrics
         self._db = db
+        self._notifier = notifier
         self._loop_interval = (
             settings.retention.cleanup_loop_interval_seconds
             if settings is not None
@@ -99,7 +100,7 @@ class CleanupWorker:
                 _CleanupTask(
                     name="nonce_gc",
                     interval_seconds=settings.nonce.gc_interval_seconds,
-                    func=lambda: self._nonce_gc(nonce_service),
+                    func=lambda conn: self._nonce_gc(nonce_service, conn),
                 )
             )
 
@@ -109,7 +110,7 @@ class CleanupWorker:
                 _CleanupTask(
                     name="order_expiry",
                     interval_seconds=settings.order.cleanup_interval_seconds,
-                    func=lambda: self._order_expiry(order_repo),
+                    func=lambda conn: self._order_expiry(order_repo, conn),
                 )
             )
             # Stale PROCESSING order recovery
@@ -117,9 +118,11 @@ class CleanupWorker:
                 _CleanupTask(
                     name="stale_processing_recovery",
                     interval_seconds=settings.order.cleanup_interval_seconds,
-                    func=lambda: self._stale_processing_recovery(
+                    func=lambda conn: self._stale_processing_recovery(
                         order_repo,
                         settings.order.stale_processing_threshold_seconds,
+                        conn,
+                        notifier=self._notifier,
                     ),
                 )
             )
@@ -130,8 +133,8 @@ class CleanupWorker:
                 _CleanupTask(
                     name="audit_retention",
                     interval_seconds=settings.audit_retention.cleanup_interval_seconds,
-                    func=lambda: self._audit_retention(
-                        db,
+                    func=lambda conn: self._audit_retention(
+                        conn or db,
                         settings.audit_retention.max_age_days,
                     ),
                 )
@@ -146,7 +149,7 @@ class CleanupWorker:
                 _CleanupTask(
                     name="rate_limit_gc",
                     interval_seconds=gc_interval,
-                    func=lambda: self._rate_limit_gc(db_rate_limiter),
+                    func=lambda conn: self._rate_limit_gc(db_rate_limiter, conn),
                 )
             )
 
@@ -157,8 +160,8 @@ class CleanupWorker:
                 _CleanupTask(
                     name="authz_retention",
                     interval_seconds=ret.cleanup_interval_seconds,
-                    func=lambda: self._authz_retention(
-                        db,
+                    func=lambda conn: self._authz_retention(
+                        conn or db,
                         ret.expired_authz_max_age_days,
                     ),
                 )
@@ -167,8 +170,8 @@ class CleanupWorker:
                 _CleanupTask(
                     name="challenge_retention",
                     interval_seconds=ret.cleanup_interval_seconds,
-                    func=lambda: self._challenge_retention(
-                        db,
+                    func=lambda conn: self._challenge_retention(
+                        conn or db,
                         ret.invalid_challenge_max_age_days,
                     ),
                 )
@@ -177,8 +180,8 @@ class CleanupWorker:
                 _CleanupTask(
                     name="order_retention",
                     interval_seconds=ret.cleanup_interval_seconds,
-                    func=lambda: self._order_retention(
-                        db,
+                    func=lambda conn: self._order_retention(
+                        conn or db,
                         ret.invalid_order_max_age_days,
                     ),
                 )
@@ -187,8 +190,8 @@ class CleanupWorker:
                 _CleanupTask(
                     name="notice_retention",
                     interval_seconds=ret.cleanup_interval_seconds,
-                    func=lambda: self._notice_retention(
-                        db,
+                    func=lambda conn: self._notice_retention(
+                        conn or db,
                         ret.expiration_notice_max_age_days,
                     ),
                 )
@@ -215,61 +218,42 @@ class CleanupWorker:
         """Signal the worker to stop and wait for it."""
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join(timeout=self._loop_interval + 5)
+            # Short timeout: the thread is a daemon and will die with the
+            # process anyway.  A long join blocks the atexit chain and can
+            # cause gunicorn to SIGKILL the worker.
+            self._thread.join(timeout=5)
             log.info("Cleanup worker stopped")
-
-    def _try_acquire_leader(self) -> bool:
-        """Try to acquire the advisory lock for leader election.
-
-        Returns True if this instance is the leader, False otherwise.
-        When no DB is available (tests), always returns True.
-        """
-        if self._db is None:
-            return True
-        try:
-            return bool(
-                self._db.fetch_value(
-                    "SELECT pg_try_advisory_lock(%s)",
-                    (self._ADVISORY_LOCK_ID,),
-                ),
-            )
-        except Exception:  # noqa: BLE001
-            log.debug("Advisory lock check failed, skipping this cycle")
-            return False
-
-    def _release_leader(self) -> None:
-        """Release the advisory lock."""
-        if self._db is None:
-            return
-        with contextlib.suppress(Exception):
-            self._db.execute(
-                "SELECT pg_advisory_unlock(%s)",
-                (self._ADVISORY_LOCK_ID,),
-            )
 
     def _run(self) -> None:  # noqa: C901
         """Run main loop -- wake periodically, check which tasks are due."""
+        from acmeeh.db.init import advisory_lock, is_pool_healthy, log_pool_stats  # noqa: PLC0415
+
         while not self._stop_event.is_set():
-            # Leader election: only one instance runs cleanup
-            if not self._try_acquire_leader():
-                self._stop_event.wait(timeout=self._loop_interval)
+            # Yield to request-handling threads when pool is stressed.
+            if self._db is not None and not is_pool_healthy(self._db):
+                log.debug("Cleanup worker: pool under pressure — skipping cycle")
+                self._stop_event.wait(timeout=self._loop_interval * 2)
                 continue
 
             try:
-                now = time.monotonic()
-                for task in self._tasks:
-                    if self._stop_event.is_set():
-                        break
-                    if task.is_due(now):
-                        self._execute_task(task, now)
-            finally:
-                self._release_leader()
+                with advisory_lock(self._db, self._ADVISORY_LOCK_ID) as (acquired, conn):
+                    if acquired:
+                        now = time.monotonic()
+                        for task in self._tasks:
+                            if self._stop_event.is_set():
+                                break
+                            if task.is_due(now):
+                                self._execute_task(task, now, conn)
+            except Exception:  # noqa: BLE001
+                log.debug("Advisory lock cycle failed, skipping this cycle")
+                if self._db is not None:
+                    log_pool_stats(self._db, "cleanup_worker")
             self._stop_event.wait(timeout=self._loop_interval)
 
-    def _execute_task(self, task: _CleanupTask, now: float) -> None:
+    def _execute_task(self, task: _CleanupTask, now: float, conn=None) -> None:
         """Execute a single cleanup task with error tracking and metrics."""
         try:
-            task.run(now)
+            task.run(now, conn)
             task.consecutive_failures = 0
             if self._metrics:
                 self._metrics.increment(
@@ -291,19 +275,61 @@ class CleanupWorker:
 
     # -- Task implementations --------------------------------------------------
 
+    # Max rows to delete per iteration to avoid long-held locks.
+    _DELETE_BATCH_SIZE = 1000
+
     @staticmethod
-    def _nonce_gc(nonce_service: NonceService) -> None:
+    def _batched_delete(
+        db: Any, table: str, where_clause: str, params: tuple, label: str,
+    ) -> int:
+        """Delete rows in batches to avoid long-held row locks.
+
+        Uses a CTE to select a bounded set of ``ctid``s, then deletes
+        only those rows.  Repeats until fewer than ``_DELETE_BATCH_SIZE``
+        rows are removed in a single pass.
+
+        Parameters
+        ----------
+        table:
+            Fully-qualified table name (e.g. ``"admin.audit_log"``).
+        where_clause:
+            SQL ``WHERE`` fragment **without** the ``WHERE`` keyword.
+        params:
+            Bind parameters for *where_clause*.
+
+        Returns total rows deleted.
+        """
+        batch_limit = CleanupWorker._DELETE_BATCH_SIZE
+        total = 0
+        while True:
+            affected = db.execute(
+                f"WITH batch AS ("
+                f"  SELECT ctid FROM {table} WHERE {where_clause} LIMIT %s"
+                f") DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM batch)",
+                (*params, batch_limit),
+            )
+            if not isinstance(affected, int):
+                break
+            total += affected
+            if affected < batch_limit:
+                break
+        if total:
+            log.info("%s: deleted %d rows", label, total)
+        return total
+
+    @staticmethod
+    def _nonce_gc(nonce_service: NonceService, conn=None) -> None:
         """Remove expired nonces via the nonce service."""
-        deleted = nonce_service.gc()
+        deleted = nonce_service.gc(conn=conn)
         if deleted:
             log.debug("Nonce GC: removed %d expired nonces", deleted)
 
     @staticmethod
-    def _order_expiry(order_repo: OrderRepository) -> None:
+    def _order_expiry(order_repo: OrderRepository, conn=None) -> None:
         """Transition expired actionable orders to invalid status."""
         from acmeeh.core.types import OrderStatus  # noqa: PLC0415
 
-        expired = order_repo.find_expired_actionable()
+        expired = order_repo.find_expired_actionable(conn=conn)
         count = 0
         for order in expired:
             order_repo.transition_status(
@@ -314,6 +340,7 @@ class CleanupWorker:
                     "type": "urn:ietf:params:acme:error:serverInternal",
                     "detail": "Order expired",
                 },
+                conn=conn,
             )
             count += 1
         if count:
@@ -326,11 +353,13 @@ class CleanupWorker:
     def _stale_processing_recovery(
         order_repo: OrderRepository,
         threshold_seconds: int,
+        conn=None,
+        notifier=None,
     ) -> None:
         """Recover orders stuck in PROCESSING state past the threshold."""
-        from acmeeh.core.types import OrderStatus  # noqa: PLC0415
+        from acmeeh.core.types import NotificationType, OrderStatus  # noqa: PLC0415
 
-        stale = order_repo.find_stale_processing(threshold_seconds)
+        stale = order_repo.find_stale_processing(threshold_seconds, conn=conn)
         count = 0
         for order in stale:
             order_repo.transition_status(
@@ -344,8 +373,22 @@ class CleanupWorker:
                         "instance crash during finalization"
                     ),
                 },
+                conn=conn,
             )
             count += 1
+            if notifier:
+                try:
+                    domains = [ident.value for ident in order.identifiers]
+                    notifier.notify(
+                        NotificationType.ORDER_STALE_RECOVERED,
+                        order.account_id,
+                        {
+                            "order_id": str(order.id),
+                            "domains": domains,
+                        },
+                    )
+                except Exception:  # noqa: BLE001
+                    log.exception("Failed to send ORDER_STALE_RECOVERED notification")
         if count:
             log.warning(
                 "Stale processing recovery: transitioned %d stuck orders to invalid",
@@ -356,20 +399,18 @@ class CleanupWorker:
     def _audit_retention(db: Any, max_age_days: int) -> None:
         """Delete audit log entries older than the retention period."""
         cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
-        deleted = db.execute(
-            "DELETE FROM admin.audit_log WHERE created_at < %s",
-            (cutoff,),
+        CleanupWorker._batched_delete(
+            db,
+            table="admin.audit_log",
+            where_clause="created_at < %s",
+            params=(cutoff,),
+            label="Audit retention",
         )
-        if deleted:
-            log.info(
-                "Audit retention: deleted %d old audit entries",
-                deleted,
-            )
 
     @staticmethod
-    def _rate_limit_gc(limiter: DatabaseRateLimiter) -> None:
+    def _rate_limit_gc(limiter: DatabaseRateLimiter, conn=None) -> None:
         """Remove expired rate-limit counters."""
-        deleted = limiter.gc()
+        deleted = limiter.gc(conn=conn)
         if deleted:
             log.debug(
                 "Rate limit GC: deleted %d expired counters",
@@ -380,54 +421,46 @@ class CleanupWorker:
     def _authz_retention(db: Any, max_age_days: int) -> None:
         """Delete old expired/invalid authorizations past retention."""
         cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
-        deleted = db.execute(
-            "DELETE FROM authorizations WHERE status IN ('expired', 'invalid') AND updated_at < %s",
-            (cutoff,),
+        CleanupWorker._batched_delete(
+            db,
+            table="authorizations",
+            where_clause="status IN ('expired', 'invalid') AND updated_at < %s",
+            params=(cutoff,),
+            label="Authz retention",
         )
-        if deleted:
-            log.info(
-                "Authz retention: deleted %d old expired/invalid authorizations",
-                deleted,
-            )
 
     @staticmethod
     def _challenge_retention(db: Any, max_age_days: int) -> None:
         """Delete old invalid challenges past retention."""
         cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
-        deleted = db.execute(
-            "DELETE FROM challenges WHERE status = 'invalid' AND updated_at < %s",
-            (cutoff,),
+        CleanupWorker._batched_delete(
+            db,
+            table="challenges",
+            where_clause="status = 'invalid' AND updated_at < %s",
+            params=(cutoff,),
+            label="Challenge retention",
         )
-        if deleted:
-            log.info(
-                "Challenge retention: deleted %d old invalid challenges",
-                deleted,
-            )
 
     @staticmethod
     def _order_retention(db: Any, max_age_days: int) -> None:
         """Delete old invalid orders past retention."""
         cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
-        deleted = db.execute(
-            "DELETE FROM orders WHERE status = 'invalid' AND updated_at < %s",
-            (cutoff,),
+        CleanupWorker._batched_delete(
+            db,
+            table="orders",
+            where_clause="status = 'invalid' AND updated_at < %s",
+            params=(cutoff,),
+            label="Order retention",
         )
-        if deleted:
-            log.info(
-                "Order retention: deleted %d old invalid orders",
-                deleted,
-            )
 
     @staticmethod
     def _notice_retention(db: Any, max_age_days: int) -> None:
         """Delete old expiration notices past retention."""
         cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
-        deleted = db.execute(
-            "DELETE FROM certificate_expiration_notices WHERE created_at < %s",
-            (cutoff,),
+        CleanupWorker._batched_delete(
+            db,
+            table="certificate_expiration_notices",
+            where_clause="created_at < %s",
+            params=(cutoff,),
+            label="Notice retention",
         )
-        if deleted:
-            log.info(
-                "Notice retention: deleted %d old expiration notices",
-                deleted,
-            )

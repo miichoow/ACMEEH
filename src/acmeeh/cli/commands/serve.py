@@ -11,6 +11,7 @@ log = logging.getLogger(__name__)
 def run_serve(config, args) -> None:
     """Start the ACMEEH server."""
     from acmeeh.app import create_app
+    from acmeeh.app.factory import start_workers
     from acmeeh.db import init_database
 
     db = init_database(config.settings.database)
@@ -18,6 +19,8 @@ def run_serve(config, args) -> None:
 
     if args.dev:
         log.info("Starting development server (not for production)")
+        # No fork — safe to start workers here directly
+        start_workers(app)
         ssl_ctx = None
         tls_cert = Path("dev/tls/server.pem")
         tls_key = Path("dev/tls/server-key.pem")

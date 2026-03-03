@@ -6,7 +6,6 @@ Runs as a daemon thread started during application startup.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import threading
 from datetime import UTC
@@ -91,48 +90,33 @@ class ChallengeWorker:
         """Signal the worker to stop and wait for it."""
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join(timeout=self._poll_seconds + 5)
+            # Short timeout: the thread is a daemon and will die with the
+            # process anyway.  A long join blocks the atexit chain and can
+            # cause gunicorn to SIGKILL the worker.
+            self._thread.join(timeout=5)
             log.info("Challenge worker stopped")
-
-    def _try_acquire_leader(self) -> bool:
-        """Try to acquire the advisory lock for leader election."""
-        if self._db is None:
-            return True
-        try:
-            return bool(
-                self._db.fetch_value(
-                    "SELECT pg_try_advisory_lock(%s)",
-                    (self._ADVISORY_LOCK_ID,),
-                ),
-            )
-        except Exception:
-            log.debug("Advisory lock check failed, skipping this cycle")
-            return False
-
-    def _release_leader(self) -> None:
-        """Release the advisory lock."""
-        if self._db is None:
-            return
-        with contextlib.suppress(Exception):
-            self._db.execute(
-                "SELECT pg_advisory_unlock(%s)",
-                (self._ADVISORY_LOCK_ID,),
-            )
 
     def _run(self) -> None:
         """Main worker loop."""
+        from acmeeh.db.init import advisory_lock, is_pool_healthy, log_pool_stats  # noqa: PLC0415
+
         while not self._stop_event.is_set():
-            # Leader election: only one instance processes stale challenges
-            if not self._try_acquire_leader():
-                self._stop_event.wait(timeout=self._poll_seconds)
+            # Yield to request-handling threads when pool is stressed.
+            if self._db is not None and not is_pool_healthy(self._db):
+                log.debug("Challenge worker: pool under pressure — skipping cycle")
+                self._stop_event.wait(timeout=self._poll_seconds * 2)
                 continue
 
+            work_items = None
+
+            # Collect work while holding the advisory lock.
+            # The lock is released when the with-block exits (before
+            # slow challenge processing).
             try:
-                self._poll()
-                self._consecutive_failures = 0
-                if self._metrics:
-                    self._metrics.increment("acmeeh_challenge_worker_polls_total")
-            except Exception:
+                with advisory_lock(self._db, self._ADVISORY_LOCK_ID) as (acquired, conn):
+                    if acquired:
+                        work_items = self._collect_work(conn)
+            except Exception:  # noqa: BLE001
                 self._consecutive_failures += 1
                 log.exception(
                     "Challenge worker poll error (consecutive failures: %d)",
@@ -140,63 +124,107 @@ class ChallengeWorker:
                 )
                 if self._metrics:
                     self._metrics.increment("acmeeh_challenge_worker_errors_total")
-                # Exponential backoff: poll_seconds * 2^failures, capped at 300s
+                if self._db is not None:
+                    log_pool_stats(self._db, "challenge_worker")
                 backoff = min(
                     self._poll_seconds * (2**self._consecutive_failures),
                     300,
                 )
                 self._stop_event.wait(timeout=backoff)
-                self._release_leader()
                 continue
-            finally:
-                self._release_leader()
+
+            # Process challenges without holding the advisory lock.
+            if work_items:
+                try:
+                    self._process_work(work_items)
+                    self._consecutive_failures = 0
+                    if self._metrics:
+                        self._metrics.increment("acmeeh_challenge_worker_polls_total")
+                except Exception:  # noqa: BLE001
+                    self._consecutive_failures += 1
+                    log.exception(
+                        "Challenge worker process error (consecutive failures: %d)",
+                        self._consecutive_failures,
+                    )
+                    if self._metrics:
+                        self._metrics.increment("acmeeh_challenge_worker_errors_total")
+            else:
+                self._consecutive_failures = 0
+                if self._metrics:
+                    self._metrics.increment("acmeeh_challenge_worker_polls_total")
+
             self._stop_event.wait(timeout=self._poll_seconds)
 
-    def _poll(self) -> None:
-        """Find and process stale challenges."""
-        import uuid as _uuid
+    def _collect_work(self, conn=None) -> list:
+        """Release stale locks and gather retryable challenges with context.
+
+        Pre-fetches authorization and account data while the advisory-lock
+        connection is available, avoiding 2 extra pool checkouts per
+        challenge during the processing phase.
+
+        Returns a list of ``(challenge, jwk)`` tuples.
+        """
         from datetime import datetime, timedelta
+
+        threshold = datetime.now(UTC) - timedelta(seconds=self._stale_seconds)
+        released = self._challenges.release_stale_locks(threshold, conn=conn)
+        if released > 0:
+            log.info("Released %d stale challenge locks", released)
+
+        now_utc = datetime.now(UTC)
+        retryable = self._challenges.find_retryable(now_utc, conn=conn)
+        if not retryable or conn is None:
+            # Without conn, fall back to per-item lookup in _process_work
+            return [(ch, None) for ch in retryable]
+
+        # Batch-fetch authz + account JWKs in a single query
+        authz_ids = list({ch.authorization_id for ch in retryable})
+        rows = conn.fetch_all(
+            "SELECT a.id AS authz_id, acc.jwk "
+            "FROM authorizations a "
+            "JOIN accounts acc ON acc.id = a.account_id "
+            "WHERE a.id = ANY(%s)",
+            (authz_ids,),
+            as_dict=True,
+        )
+        jwk_by_authz = {row["authz_id"]: row["jwk"] for row in rows}
+
+        return [
+            (ch, jwk_by_authz.get(ch.authorization_id))
+            for ch in retryable
+        ]
+
+    def _process_work(self, work_items: list) -> None:
+        """Process retryable challenges (slow, advisory lock already released)."""
+        import uuid as _uuid
+        from uuid import uuid4
+
+        from acmeeh.db.init import is_pool_healthy  # noqa: PLC0415
 
         _request_id = f"bg-worker-{_uuid.uuid4().hex[:12]}"
 
-        threshold = datetime.now(UTC) - timedelta(seconds=self._stale_seconds)
-        released = self._challenges.release_stale_locks(threshold)
-        if released > 0:
-            log.info(
-                "Released %d stale challenge locks", released, extra={"request_id": _request_id}
-            )
-
-        # Find challenges that were just released back to pending
-        # and process them by looking up their authz and account
-        # Find pending challenges that have been retried (retry_count > 0)
-        # These are the ones that were released from stale locks
-        # Respect next_retry_at for exponential backoff scheduling
-        from uuid import uuid4
-
-        from acmeeh.core.types import ChallengeStatus
-
-        now_utc = datetime.now(UTC)
-
-        all_challenges = self._challenges.find_by({})
-        for challenge in all_challenges:
+        for challenge, jwk in work_items:
             if self._stop_event.is_set():
                 break
-            if challenge.status != ChallengeStatus.PENDING:
-                continue
-            if challenge.retry_count < 1:
-                continue
-            # Skip challenges whose backoff window hasn't elapsed yet
-            if challenge.next_retry_at is not None and challenge.next_retry_at > now_utc:
-                continue
+            # Stop processing challenges when pool is stressed — let
+            # request-handling threads use the connections instead.
+            if self._db is not None and not is_pool_healthy(self._db):
+                log.debug(
+                    "Challenge worker: pool under pressure — "
+                    "deferring remaining %d challenges",
+                    len(work_items),
+                )
+                break
 
-            # Look up authorization -> account -> JWK
-            authz = self._authz.find_by_id(challenge.authorization_id)
-            if authz is None:
-                continue
-
-            account = self._accounts.find_by_id(authz.account_id)
-            if account is None:
-                continue
+            # Fall back to per-item lookup if JWK wasn't pre-fetched
+            if jwk is None:
+                authz = self._authz.find_by_id(challenge.authorization_id)
+                if authz is None:
+                    continue
+                account = self._accounts.find_by_id(authz.account_id)
+                if account is None:
+                    continue
+                jwk = account.jwk
 
             worker_id = f"bg-{uuid4().hex[:8]}"
             log.debug(
@@ -215,7 +243,7 @@ class ChallengeWorker:
                 self._service.process_pending(
                     challenge.id,
                     worker_id,
-                    account.jwk,
+                    jwk,
                 )
             except Exception:
                 log.exception(

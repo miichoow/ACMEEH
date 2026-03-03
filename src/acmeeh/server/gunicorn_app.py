@@ -42,6 +42,25 @@ def run_gunicorn(app: Flask, settings: ServerSettings) -> None:
             msg,
         )
 
+    flask_app = app  # captured by _post_fork closure below
+
+    def _post_fork(server, worker) -> None:  # noqa: ANN001, ARG001
+        """Re-initialize the DB pool and start background workers after fork.
+
+        The master process's connection pool is inherited by child workers
+        via shared file descriptors.  We must close those stale connections
+        and open fresh ones before any DB access.  Threads created before
+        ``fork()`` are silently killed in the child, so we also (re-)start
+        background workers here.
+        """
+        from acmeeh.db import reinit_pool_after_fork  # noqa: PLC0415
+
+        reinit_pool_after_fork()
+
+        from acmeeh.app.factory import start_workers  # noqa: PLC0415
+
+        start_workers(flask_app)
+
     class _App(BaseApplication):
         def __init__(self, flask_app: Flask, server: ServerSettings) -> None:
             self.application = flask_app
@@ -62,6 +81,8 @@ def run_gunicorn(app: Flask, settings: ServerSettings) -> None:
                 self.cfg.set("max_requests_jitter", s.max_requests_jitter)
             # Silence gunicorn's own access log — we handle it ourselves
             self.cfg.set("accesslog", None)
+            # Start background workers after fork so threads survive
+            self.cfg.set("post_fork", _post_fork)
 
         def load(self) -> Flask:
             return self.application
