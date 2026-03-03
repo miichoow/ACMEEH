@@ -556,6 +556,195 @@ class AdminUserService:
 
         return updated
 
+    # -- EAB ↔ Allowed Identifier linkage --
+
+    def add_eab_identifier(
+        self,
+        eab_id: UUID,
+        identifier_id: UUID,
+        *,
+        actor_id: UUID | None = None,
+        ip_address: str | None = None,
+    ) -> None:
+        """Associate an allowed identifier with an EAB credential."""
+        from acmeeh.app.errors import AcmeProblem  # noqa: PLC0415
+
+        if self._eab is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB management is not available", status=503)
+
+        cred = self._eab.find_by_id(eab_id)
+        if cred is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB credential not found", status=404)
+
+        if self._allowlist is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "Allowlist management is not available", status=503)
+
+        ident = self._allowlist.find_by_id(identifier_id)
+        if ident is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "Allowed identifier not found", status=404)
+
+        self._eab.add_identifier_association(eab_id, identifier_id)
+
+        self._log_action(
+            actor_id,
+            "add_eab_identifier",
+            details={
+                "eab_id": str(eab_id),
+                "identifier_id": str(identifier_id),
+            },
+            ip_address=ip_address,
+        )
+
+    def remove_eab_identifier(
+        self,
+        eab_id: UUID,
+        identifier_id: UUID,
+        *,
+        actor_id: UUID | None = None,
+        ip_address: str | None = None,
+    ) -> None:
+        """Remove an identifier association from an EAB credential."""
+        from acmeeh.app.errors import AcmeProblem  # noqa: PLC0415
+
+        if self._eab is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB management is not available", status=503)
+
+        cred = self._eab.find_by_id(eab_id)
+        if cred is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB credential not found", status=404)
+
+        self._eab.remove_identifier_association(eab_id, identifier_id)
+
+        self._log_action(
+            actor_id,
+            "remove_eab_identifier",
+            details={
+                "eab_id": str(eab_id),
+                "identifier_id": str(identifier_id),
+            },
+            ip_address=ip_address,
+        )
+
+    def list_eab_identifiers(self, eab_id: UUID) -> list[AllowedIdentifier]:
+        """List all allowed identifiers linked to an EAB credential."""
+        from acmeeh.app.errors import AcmeProblem  # noqa: PLC0415
+
+        if self._eab is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB management is not available", status=503)
+
+        cred = self._eab.find_by_id(eab_id)
+        if cred is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB credential not found", status=404)
+
+        return self._eab.find_identifiers_for_eab(eab_id)
+
+    # -- EAB ↔ CSR Profile linkage --
+
+    def assign_eab_csr_profile(
+        self,
+        eab_id: UUID,
+        profile_id: UUID,
+        *,
+        actor_id: UUID | None = None,
+        ip_address: str | None = None,
+    ) -> None:
+        """Assign a CSR profile to an EAB credential."""
+        from acmeeh.app.errors import AcmeProblem  # noqa: PLC0415
+
+        if self._eab is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB management is not available", status=503)
+
+        cred = self._eab.find_by_id(eab_id)
+        if cred is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB credential not found", status=404)
+
+        if self._csr_profiles is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "CSR profile management is not available", status=503)
+
+        profile = self._csr_profiles.find_by_id(profile_id)
+        if profile is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "CSR profile not found", status=404)
+
+        self._eab.assign_csr_profile(eab_id, profile_id, actor_id)
+
+        self._log_action(
+            actor_id,
+            "assign_eab_csr_profile",
+            details={
+                "eab_id": str(eab_id),
+                "profile_id": str(profile_id),
+            },
+            ip_address=ip_address,
+        )
+
+    def unassign_eab_csr_profile(
+        self,
+        eab_id: UUID,
+        profile_id: UUID,
+        *,
+        actor_id: UUID | None = None,
+        ip_address: str | None = None,
+    ) -> None:
+        """Remove the CSR profile assignment from an EAB credential."""
+        from acmeeh.app.errors import AcmeProblem  # noqa: PLC0415
+
+        if self._eab is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB management is not available", status=503)
+
+        cred = self._eab.find_by_id(eab_id)
+        if cred is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB credential not found", status=404)
+
+        if self._csr_profiles is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "CSR profile management is not available", status=503)
+
+        profile = self._csr_profiles.find_by_id(profile_id)
+        if profile is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "CSR profile not found", status=404)
+
+        self._eab.unassign_csr_profile(eab_id, profile_id)
+
+        self._log_action(
+            actor_id,
+            "unassign_eab_csr_profile",
+            details={
+                "eab_id": str(eab_id),
+                "profile_id": str(profile_id),
+            },
+            ip_address=ip_address,
+        )
+
+    def get_eab_csr_profile(self, eab_id: UUID) -> CsrProfile | None:
+        """Return the CSR profile assigned to an EAB credential, or None."""
+        from acmeeh.app.errors import AcmeProblem  # noqa: PLC0415
+
+        if self._eab is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB management is not available", status=503)
+
+        cred = self._eab.find_by_id(eab_id)
+        if cred is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "EAB credential not found", status=404)
+
+        return self._eab.find_csr_profile_for_eab(eab_id)
+
     # -- Allowed identifier management --
 
     def list_allowed_identifiers(
@@ -607,7 +796,7 @@ class AdminUserService:
 
         if identifier_type == "ip":
             try:
-                _ipaddr.ip_address(identifier_value)
+                addr = _ipaddr.ip_address(identifier_value)
             except ValueError:
                 msg = "about:blank"
                 raise AcmeProblem(  # noqa: B904
@@ -615,9 +804,17 @@ class AdminUserService:
                     f"Invalid IP address '{identifier_value}'",
                     status=400,
                 )
+            if addr.is_loopback or addr.is_unspecified or addr.is_multicast:
+                msg = "about:blank"
+                raise AcmeProblem(
+                    msg,
+                    f"IP address '{identifier_value}' is not allowed (loopback, unspecified, or multicast)",
+                    status=400,
+                )
         else:
             # Basic domain validation
             identifier_value = identifier_value.lower()
+            self._validate_dns_label(identifier_value)
 
         existing = self._allowlist.find_by_type_value(
             identifier_type,
@@ -1327,6 +1524,36 @@ class AdminUserService:
                     )
 
     # -- internal helpers --
+
+    @staticmethod
+    def _validate_dns_label(value: str) -> None:
+        """Validate DNS identifier labels (RFC 952 / RFC 1123)."""
+        from acmeeh.app.errors import AcmeProblem  # noqa: PLC0415
+
+        # Handle wildcard prefix
+        is_wildcard = value.startswith("*.")
+        base = value[2:] if is_wildcard else value
+
+        # Reject wildcards not at leftmost position (e.g. foo.*.com)
+        if not is_wildcard and "*" in value:
+            msg = "about:blank"
+            raise AcmeProblem(msg, f"Invalid wildcard in '{value}'", status=400)
+
+        # Reject multi-level wildcards (e.g. *.*.example.com)
+        if is_wildcard and "*" in base:
+            msg = "about:blank"
+            raise AcmeProblem(msg, f"Multi-level wildcard in '{value}' is not allowed", status=400)
+
+        for label in base.split("."):
+            if not label:
+                continue
+            if label.startswith("-") or label.endswith("-"):
+                msg = "about:blank"
+                raise AcmeProblem(
+                    msg,
+                    f"DNS label '{label}' must not start or end with a hyphen",
+                    status=400,
+                )
 
     def _log_action(
         self,

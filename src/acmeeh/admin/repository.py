@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 
 
 class AdminUserRepository(BaseRepository[AdminUser]):
-    table_name = "admin.users"
+    schema = "admin"
+    table_name = "users"
     primary_key = "id"
 
     def _row_to_entity(self, row: dict) -> AdminUser:
@@ -96,7 +97,8 @@ class AdminUserRepository(BaseRepository[AdminUser]):
 
 
 class AuditLogRepository(BaseRepository[AuditLogEntry]):
-    table_name = "admin.audit_log"
+    schema = "admin"
+    table_name = "audit_log"
     primary_key = "id"
 
     def _row_to_entity(self, row: dict) -> AuditLogEntry:
@@ -184,7 +186,8 @@ class AuditLogRepository(BaseRepository[AuditLogEntry]):
 
 
 class EabCredentialRepository(BaseRepository[EabCredential]):
-    table_name = "admin.eab_credentials"
+    schema = "admin"
+    table_name = "eab_credentials"
     primary_key = "id"
 
     def _row_to_entity(self, row: dict) -> EabCredential:
@@ -252,9 +255,181 @@ class EabCredentialRepository(BaseRepository[EabCredential]):
         )
         return self._row_to_entity(row) if row else None
 
+    # -- EAB ↔ Allowed Identifier linkage --
+
+    def add_identifier_association(self, eab_id: UUID, identifier_id: UUID) -> None:
+        """Link an allowed identifier to an EAB credential."""
+        db = Database.get_instance()
+        db.execute(
+            "INSERT INTO admin.eab_allowed_identifiers "
+            "(eab_credential_id, allowed_identifier_id) VALUES (%s, %s) "
+            "ON CONFLICT DO NOTHING",
+            (eab_id, identifier_id),
+        )
+
+    def remove_identifier_association(self, eab_id: UUID, identifier_id: UUID) -> None:
+        """Unlink an allowed identifier from an EAB credential."""
+        db = Database.get_instance()
+        db.execute(
+            "DELETE FROM admin.eab_allowed_identifiers "
+            "WHERE eab_credential_id = %s AND allowed_identifier_id = %s",
+            (eab_id, identifier_id),
+        )
+
+    def find_identifiers_for_eab(self, eab_id: UUID) -> list[AllowedIdentifier]:
+        """Return all allowed identifiers linked to an EAB credential."""
+        db = Database.get_instance()
+        rows = db.fetch_all(
+            "SELECT ai.* "
+            "FROM admin.allowed_identifiers ai "
+            "JOIN admin.eab_allowed_identifiers eai "
+            "  ON eai.allowed_identifier_id = ai.id "
+            "WHERE eai.eab_credential_id = %s "
+            "ORDER BY ai.created_at DESC",
+            (eab_id,),
+            as_dict=True,
+        )
+        return [
+            AllowedIdentifier(
+                id=r["id"],
+                identifier_type=r["identifier_type"],
+                identifier_value=r["identifier_value"],
+                created_by=r.get("created_by"),
+                created_at=r["created_at"],
+            )
+            for r in rows
+        ]
+
+    # -- EAB ↔ CSR Profile linkage --
+
+    def assign_csr_profile(
+        self,
+        eab_id: UUID,
+        profile_id: UUID,
+        assigned_by: UUID | None = None,
+    ) -> None:
+        """Assign a CSR profile to an EAB credential (UPSERT)."""
+        db = Database.get_instance()
+        db.execute(
+            "INSERT INTO admin.eab_csr_profiles "
+            "(eab_credential_id, csr_profile_id, assigned_by) "
+            "VALUES (%s, %s, %s) "
+            "ON CONFLICT (eab_credential_id) DO UPDATE "
+            "SET csr_profile_id = EXCLUDED.csr_profile_id, "
+            "    assigned_by = EXCLUDED.assigned_by",
+            (eab_id, profile_id, assigned_by),
+        )
+
+    def unassign_csr_profile(self, eab_id: UUID, profile_id: UUID) -> None:
+        """Remove the CSR profile assignment from an EAB credential."""
+        db = Database.get_instance()
+        db.execute(
+            "DELETE FROM admin.eab_csr_profiles "
+            "WHERE eab_credential_id = %s AND csr_profile_id = %s",
+            (eab_id, profile_id),
+        )
+
+    def find_csr_profile_for_eab(self, eab_id: UUID) -> CsrProfile | None:
+        """Return the CSR profile assigned to an EAB credential, or None."""
+        db = Database.get_instance()
+        row = db.fetch_one(
+            "SELECT cp.* "
+            "FROM admin.csr_profiles cp "
+            "JOIN admin.eab_csr_profiles ecp "
+            "  ON ecp.csr_profile_id = cp.id "
+            "WHERE ecp.eab_credential_id = %s",
+            (eab_id,),
+            as_dict=True,
+        )
+        if row is None:
+            return None
+        return CsrProfile(
+            id=row["id"],
+            name=row["name"],
+            profile_data=row["profile_data"],
+            description=row.get("description", ""),
+            created_by=row.get("created_by"),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    # -- Account binding (called by AccountService) --
+
+    def bind_account(self, kid: str, account_id: UUID) -> None:
+        """Bind an EAB credential to an account (without marking as used)."""
+        db = Database.get_instance()
+        db.execute(
+            "UPDATE admin.eab_credentials SET account_id = %s "
+            "WHERE kid = %s AND revoked = false",
+            (account_id, kid),
+        )
+
+    def copy_to_account_by_kid(self, kid: str, account_id: UUID) -> None:
+        """Copy EAB-linked identifiers and CSR profile to the account."""
+        db = Database.get_instance()
+        # Copy allowed identifiers
+        db.execute(
+            "INSERT INTO admin.account_allowed_identifiers "
+            "(allowed_identifier_id, account_id) "
+            "SELECT eai.allowed_identifier_id, %s "
+            "FROM admin.eab_allowed_identifiers eai "
+            "JOIN admin.eab_credentials ec ON ec.id = eai.eab_credential_id "
+            "WHERE ec.kid = %s "
+            "ON CONFLICT DO NOTHING",
+            (account_id, kid),
+        )
+        # Copy CSR profile
+        db.execute(
+            "INSERT INTO admin.account_csr_profiles "
+            "(account_id, csr_profile_id, assigned_by) "
+            "SELECT %s, ecp.csr_profile_id, ecp.assigned_by "
+            "FROM admin.eab_csr_profiles ecp "
+            "JOIN admin.eab_credentials ec ON ec.id = ecp.eab_credential_id "
+            "WHERE ec.kid = %s "
+            "ON CONFLICT (account_id) DO UPDATE "
+            "SET csr_profile_id = EXCLUDED.csr_profile_id, "
+            "    assigned_by = EXCLUDED.assigned_by",
+            (account_id, kid),
+        )
+
+    def sync_linkage_to_account(self, account_id: UUID) -> None:
+        """Sync EAB-linked identifiers and CSR profile to an account.
+
+        Looks up the EAB credential by account_id, so no kid is needed.
+        Safe to call even if no EAB is bound — the SELECTs simply return
+        zero rows.
+        """
+        db = Database.get_instance()
+        # Copy allowed identifiers from all EAB credentials bound to this account
+        db.execute(
+            "INSERT INTO admin.account_allowed_identifiers "
+            "(allowed_identifier_id, account_id) "
+            "SELECT eai.allowed_identifier_id, %s "
+            "FROM admin.eab_allowed_identifiers eai "
+            "JOIN admin.eab_credentials ec ON ec.id = eai.eab_credential_id "
+            "WHERE ec.account_id = %s "
+            "ON CONFLICT DO NOTHING",
+            (account_id, account_id),
+        )
+        # Copy CSR profile (last-bound EAB wins if multiple)
+        db.execute(
+            "INSERT INTO admin.account_csr_profiles "
+            "(account_id, csr_profile_id, assigned_by) "
+            "SELECT %s, ecp.csr_profile_id, ecp.assigned_by "
+            "FROM admin.eab_csr_profiles ecp "
+            "JOIN admin.eab_credentials ec ON ec.id = ecp.eab_credential_id "
+            "WHERE ec.account_id = %s "
+            "LIMIT 1 "
+            "ON CONFLICT (account_id) DO UPDATE "
+            "SET csr_profile_id = EXCLUDED.csr_profile_id, "
+            "    assigned_by = EXCLUDED.assigned_by",
+            (account_id, account_id),
+        )
+
 
 class AllowedIdentifierRepository(BaseRepository[AllowedIdentifier]):
-    table_name = "admin.allowed_identifiers"
+    schema = "admin"
+    table_name = "allowed_identifiers"
     primary_key = "id"
 
     def _row_to_entity(self, row: dict) -> AllowedIdentifier:
@@ -370,7 +545,8 @@ class AllowedIdentifierRepository(BaseRepository[AllowedIdentifier]):
 
 
 class CsrProfileRepository(BaseRepository[CsrProfile]):
-    table_name = "admin.csr_profiles"
+    schema = "admin"
+    table_name = "csr_profiles"
     primary_key = "id"
 
     def _row_to_entity(self, row: dict) -> CsrProfile:
@@ -427,7 +603,11 @@ class CsrProfileRepository(BaseRepository[CsrProfile]):
         return self._row_to_entity(row) if row else None
 
     def find_profile_for_account(self, account_id: UUID) -> CsrProfile | None:
-        """Return the CSR profile assigned to an account, or None."""
+        """Return the CSR profile assigned to an account, or None.
+
+        Falls back to the profile linked via the account's EAB credential
+        when no direct account-level assignment exists.
+        """
         db = Database.get_instance()
         row = db.fetch_one(
             "SELECT cp.* "
@@ -435,6 +615,24 @@ class CsrProfileRepository(BaseRepository[CsrProfile]):
             "JOIN admin.account_csr_profiles acp "
             "  ON acp.csr_profile_id = cp.id "
             "WHERE acp.account_id = %s",
+            (account_id,),
+            as_dict=True,
+        )
+        if row is not None:
+            return self._row_to_entity(row)
+        # Fallback: profile linked through the EAB credential bound to
+        # this account.  Covers the case where the admin assigned a
+        # profile to the EAB *after* account registration and the
+        # client never triggered a newAccount sync.
+        row = db.fetch_one(
+            "SELECT cp.* "
+            "FROM admin.csr_profiles cp "
+            "JOIN admin.eab_csr_profiles ecp "
+            "  ON ecp.csr_profile_id = cp.id "
+            "JOIN admin.eab_credentials ec "
+            "  ON ec.id = ecp.eab_credential_id "
+            "WHERE ec.account_id = %s "
+            "LIMIT 1",
             (account_id,),
             as_dict=True,
         )

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import re as _re
+import unicodedata as _unicodedata
+from datetime import datetime as _datetime
 from typing import TYPE_CHECKING, Any
+from uuid import UUID as _UUID
 
 from flask import Blueprint, Response, current_app, g, jsonify, request
 
@@ -44,7 +48,132 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Input validation helpers
+# ---------------------------------------------------------------------------
+
+_USERNAME_BAD_RE = _re.compile(r"[\s\x00-\x1f\x7f]")
+_EMAIL_RE = _re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _require_str(data: dict, field: str, *, max_length: int = 0) -> str:
+    """Validate that a field is a string, optionally with max length."""
+    val = data.get(field, "")
+    if not isinstance(val, str):
+        raise AcmeProblem("about:blank", f"'{field}' must be a string", status=400)
+    if "\x00" in val:
+        raise AcmeProblem(
+            "about:blank", f"'{field}' contains invalid characters", status=400
+        )
+    if max_length and len(val) > max_length:
+        raise AcmeProblem(
+            "about:blank",
+            f"'{field}' must not exceed {max_length} characters",
+            status=400,
+        )
+    return val
+
+
+def _require_strict_bool(data: dict, field: str) -> bool:
+    """Validate that a field is strictly a boolean (not int/str)."""
+    val = data[field]
+    if not isinstance(val, bool):
+        raise AcmeProblem(
+            "about:blank", f"'{field}' must be a boolean (true/false)", status=400
+        )
+    return val
+
+
+def _validate_username(val: str) -> None:
+    """Reject control characters, whitespace, and invisible Unicode."""
+    if _USERNAME_BAD_RE.search(val):
+        raise AcmeProblem(
+            "about:blank",
+            "Username must not contain control characters or whitespace",
+            status=400,
+        )
+    for ch in val:
+        cat = _unicodedata.category(ch)
+        if cat in ("Cf", "Cc", "Cs", "Co"):
+            raise AcmeProblem(
+                "about:blank",
+                "Username must not contain control characters or whitespace",
+                status=400,
+            )
+
+
+def _validate_email(val: str) -> None:
+    """Basic email validation (must have @ and dot in domain)."""
+    if not _EMAIL_RE.match(val):
+        raise AcmeProblem("about:blank", "Invalid email address", status=400)
+
+
+def _parse_iso_datetime(val: str, field: str) -> _datetime:
+    """Parse an ISO 8601 datetime string, raising 400 on failure."""
+    try:
+        return _datetime.fromisoformat(val)
+    except (ValueError, TypeError):
+        raise AcmeProblem(  # noqa: B904
+            "about:blank",
+            f"'{field}' must be a valid ISO 8601 datetime",
+            status=400,
+        )
+
+
+def _parse_int_param(name: str) -> int | None:
+    """Parse an integer query parameter, raising 400 on non-integer."""
+    raw = request.args.get(name)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except (ValueError, TypeError):
+        raise AcmeProblem(  # noqa: B904
+            "about:blank", f"'{name}' must be an integer", status=400
+        )
+
+
+def _validate_pagination_params(page_settings: Any) -> tuple[int, int]:
+    """Parse and validate limit/offset from query string."""
+    limit = _parse_int_param("limit")
+    offset = _parse_int_param("offset")
+    if limit is None:
+        limit = page_settings.default_page_size
+    if offset is None:
+        offset = 0
+    if limit < 1:
+        raise AcmeProblem(
+            "about:blank", "'limit' must be at least 1", status=400
+        )
+    if limit > page_settings.max_page_size:
+        raise AcmeProblem(
+            "about:blank",
+            f"'limit' must not exceed {page_settings.max_page_size}",
+            status=400,
+        )
+    if offset < 0:
+        raise AcmeProblem(
+            "about:blank", "'offset' must not be negative", status=400
+        )
+    return limit, offset
+
 admin_bp = Blueprint("admin_api", __name__)
+
+
+@admin_bp.before_request
+def _require_json_object() -> None:
+    """Reject non-dict JSON bodies on mutating requests."""
+    if request.method in ("POST", "PATCH", "PUT"):
+        ct = request.content_type or ""
+        if "json" in ct:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                raise AcmeProblem(
+                    "about:blank",
+                    "Request body must be a JSON object",
+                    status=400,
+                )
 
 
 def _get_admin_service() -> AdminUserService:
@@ -71,8 +200,8 @@ def login() -> ResponseReturnValue:
             status=400,
         )
 
-    username = data.get("username", "")
-    password = data.get("password", "")
+    username = _require_str(data, "username", max_length=128)
+    password = _require_str(data, "password", max_length=1000)
     if not username or not password:
         msg = "about:blank"
         raise AcmeProblem(
@@ -80,6 +209,7 @@ def login() -> ResponseReturnValue:
             "Both 'username' and 'password' are required",
             status=400,
         )
+    _validate_username(username)
 
     limiter = get_login_limiter()
     rate_key = f"{request.remote_addr}:{username}"
@@ -132,9 +262,9 @@ def create_user() -> ResponseReturnValue:
             status=400,
         )
 
-    username = data.get("username", "")
-    email = data.get("email", "")
-    role_str = data.get("role", "auditor")
+    username = _require_str(data, "username", max_length=128)
+    email = _require_str(data, "email", max_length=512)
+    role_str = _require_str(data, "role") if "role" in data else "auditor"
 
     if not username or not email:
         msg = "about:blank"
@@ -143,6 +273,8 @@ def create_user() -> ResponseReturnValue:
             "Both 'username' and 'email' are required",
             status=400,
         )
+    _validate_username(username)
+    _validate_email(email)
 
     try:
         role = AdminRole(role_str)
@@ -194,7 +326,7 @@ def update_user(user_id: UUID) -> ResponseReturnValue:
 
     kwargs: dict[str, Any] = {}
     if "enabled" in data:
-        kwargs["enabled"] = bool(data["enabled"])
+        kwargs["enabled"] = _require_strict_bool(data, "enabled")
     if "role" in data:
         try:
             kwargs["role"] = AdminRole(data["role"])
@@ -256,7 +388,7 @@ def reset_own_password() -> ResponseReturnValue:
 
 @admin_bp.route("/audit-log", methods=["GET"])
 @require_admin_auth
-@require_role("admin")
+@require_role("admin", "auditor")
 def get_audit_log() -> ResponseReturnValue:
     """View the admin audit log with optional filters.
 
@@ -265,18 +397,45 @@ def get_audit_log() -> ResponseReturnValue:
     """
     container = get_container()
     page_settings = container.settings.admin_api
-    limit = request.args.get(
-        "limit",
-        page_settings.default_page_size,
-        type=int,
-    )
-    limit = min(limit, page_settings.max_page_size)
+
+    # Validate limit
+    limit_raw = _parse_int_param("limit")
+    if limit_raw is not None:
+        if limit_raw < 1:
+            raise AcmeProblem("about:blank", "'limit' must be at least 1", status=400)
+        if limit_raw > page_settings.max_page_size:
+            raise AcmeProblem(
+                "about:blank",
+                f"'limit' must not exceed {page_settings.max_page_size}",
+                status=400,
+            )
+        limit = limit_raw
+    else:
+        limit = page_settings.default_page_size
 
     filters = {}
-    for key in ("action", "user_id", "since", "until"):
+    for key in ("action",):
         val = request.args.get(key)
         if val:
             filters[key] = val
+
+    # Validate user_id as UUID
+    user_id_raw = request.args.get("user_id")
+    if user_id_raw:
+        try:
+            _UUID(user_id_raw)
+        except ValueError:
+            raise AcmeProblem(  # noqa: B904
+                "about:blank", "'user_id' must be a valid UUID", status=400
+            )
+        filters["user_id"] = user_id_raw
+
+    # Validate since/until as ISO 8601
+    for dt_key in ("since", "until"):
+        dt_val = request.args.get(dt_key)
+        if dt_val:
+            _parse_iso_datetime(dt_val, dt_key)
+            filters[dt_key] = dt_val
 
     cursor_param = request.args.get("cursor")
     cursor_id = None
@@ -353,7 +512,7 @@ def create_eab() -> ResponseReturnValue:
             status=400,
         )
 
-    kid = data.get("kid", "")
+    kid = _require_str(data, "kid", max_length=255)
     if not kid:
         msg = "about:blank"
         raise AcmeProblem(
@@ -362,7 +521,7 @@ def create_eab() -> ResponseReturnValue:
             status=400,
         )
 
-    label = data.get("label", "")
+    label = _require_str(data, "label") if "label" in data else ""
 
     container = get_container()
     cred = _get_admin_service().create_eab(
@@ -402,6 +561,126 @@ def revoke_eab(cred_id: UUID) -> ResponseReturnValue:
 
 
 # -------------------------------------------------------------------
+# EAB ↔ Allowed Identifier linkage
+# -------------------------------------------------------------------
+
+
+@admin_bp.route(
+    "/eab/<uuid:cred_id>/allowed-identifiers",
+    methods=["GET"],
+)
+@require_admin_auth
+@require_role("admin")
+def list_eab_identifiers(
+    cred_id: UUID,
+) -> ResponseReturnValue:
+    """List allowed identifiers linked to an EAB credential."""
+    idents = _get_admin_service().list_eab_identifiers(cred_id)
+    return jsonify([serialize_allowed_identifier(i) for i in idents])
+
+
+@admin_bp.route(
+    "/eab/<uuid:cred_id>/allowed-identifiers/<uuid:identifier_id>",
+    methods=["PUT"],
+)
+@require_admin_auth
+@require_role("admin")
+def add_eab_identifier(
+    cred_id: UUID,
+    identifier_id: UUID,
+) -> ResponseReturnValue:
+    """Associate an allowed identifier with an EAB credential."""
+    _get_admin_service().add_eab_identifier(
+        cred_id,
+        identifier_id,
+        actor_id=g.admin_user.id,
+        ip_address=request.remote_addr,
+    )
+    return "", 204
+
+
+@admin_bp.route(
+    "/eab/<uuid:cred_id>/allowed-identifiers/<uuid:identifier_id>",
+    methods=["DELETE"],
+)
+@require_admin_auth
+@require_role("admin")
+def remove_eab_identifier(
+    cred_id: UUID,
+    identifier_id: UUID,
+) -> ResponseReturnValue:
+    """Remove an identifier association from an EAB credential."""
+    _get_admin_service().remove_eab_identifier(
+        cred_id,
+        identifier_id,
+        actor_id=g.admin_user.id,
+        ip_address=request.remote_addr,
+    )
+    return "", 204
+
+
+# -------------------------------------------------------------------
+# EAB ↔ CSR Profile linkage
+# -------------------------------------------------------------------
+
+
+@admin_bp.route(
+    "/eab/<uuid:cred_id>/csr-profile/<uuid:profile_id>",
+    methods=["PUT"],
+)
+@require_admin_auth
+@require_role("admin")
+def assign_eab_csr_profile(
+    cred_id: UUID,
+    profile_id: UUID,
+) -> ResponseReturnValue:
+    """Assign a CSR profile to an EAB credential."""
+    _get_admin_service().assign_eab_csr_profile(
+        cred_id,
+        profile_id,
+        actor_id=g.admin_user.id,
+        ip_address=request.remote_addr,
+    )
+    return "", 204
+
+
+@admin_bp.route(
+    "/eab/<uuid:cred_id>/csr-profile/<uuid:profile_id>",
+    methods=["DELETE"],
+)
+@require_admin_auth
+@require_role("admin")
+def unassign_eab_csr_profile(
+    cred_id: UUID,
+    profile_id: UUID,
+) -> ResponseReturnValue:
+    """Remove the CSR profile assignment from an EAB credential."""
+    _get_admin_service().unassign_eab_csr_profile(
+        cred_id,
+        profile_id,
+        actor_id=g.admin_user.id,
+        ip_address=request.remote_addr,
+    )
+    return "", 204
+
+
+@admin_bp.route(
+    "/eab/<uuid:cred_id>/csr-profile",
+    methods=["GET"],
+)
+@require_admin_auth
+@require_role("admin")
+def get_eab_csr_profile(
+    cred_id: UUID,
+) -> ResponseReturnValue:
+    """Get the CSR profile assigned to an EAB credential."""
+    profile = _get_admin_service().get_eab_csr_profile(cred_id)
+    if profile is None:
+        return jsonify(None)
+    return jsonify(serialize_csr_profile(profile))
+
+
+# -------------------------------------------------------------------
 # Allowed identifier management
 # -------------------------------------------------------------------
 
@@ -430,8 +709,8 @@ def create_allowed_identifier() -> ResponseReturnValue:
             status=400,
         )
 
-    id_type = data.get("type", "")
-    id_value = data.get("value", "")
+    id_type = _require_str(data, "type")
+    id_value = _require_str(data, "value")
     if not id_type or not id_value:
         msg = "about:blank"
         raise AcmeProblem(
@@ -537,6 +816,11 @@ def list_account_identifiers(
 ) -> ResponseReturnValue:
     """List allowed identifiers for a specific ACME account."""
     container = get_container()
+    acct_repo = getattr(container, "accounts", None)
+    if acct_repo is not None and acct_repo.find_by_id(account_id) is None:
+        raise AcmeProblem(
+            "about:blank", "Account not found", status=404
+        )
     idents = _get_admin_service().list_account_identifiers(
         account_id,
     )
@@ -588,6 +872,7 @@ def list_csr_profiles() -> ResponseReturnValue:
 
 
 @admin_bp.route("/csr-profiles", methods=["POST"])
+@admin_bp.route("/csr-profile", methods=["POST"])
 @require_admin_auth
 @require_role("admin")
 def create_csr_profile() -> ResponseReturnValue:
@@ -611,15 +896,15 @@ def create_csr_profile() -> ResponseReturnValue:
         )
 
     profile_data = data.get("profile_data")
-    if profile_data is None:
+    if not isinstance(profile_data, dict):
         msg = "about:blank"
         raise AcmeProblem(
             msg,
-            "'profile_data' is required",
+            "'profile_data' must be a JSON object",
             status=400,
         )
 
-    description = data.get("description", "")
+    description = _require_str(data, "description", max_length=10000) if "description" in data else ""
 
     container = get_container()
     profile = _get_admin_service().create_csr_profile(
@@ -687,6 +972,10 @@ def get_csr_profile(
     "/csr-profiles/<uuid:profile_id>",
     methods=["PUT"],
 )
+@admin_bp.route(
+    "/csr-profile/<uuid:profile_id>",
+    methods=["PUT"],
+)
 @require_admin_auth
 @require_role("admin")
 def update_csr_profile(
@@ -712,11 +1001,11 @@ def update_csr_profile(
         )
 
     profile_data = data.get("profile_data")
-    if profile_data is None:
+    if not isinstance(profile_data, dict):
         msg = "about:blank"
         raise AcmeProblem(
             msg,
-            "'profile_data' is required",
+            "'profile_data' must be a JSON object",
             status=400,
         )
 
@@ -806,6 +1095,11 @@ def get_account_csr_profile(
 ) -> ResponseReturnValue:
     """Get the CSR profile assigned to an ACME account."""
     container = get_container()
+    acct_repo = getattr(container, "accounts", None)
+    if acct_repo is not None and acct_repo.find_by_id(account_id) is None:
+        raise AcmeProblem(
+            "about:blank", "Account not found", status=404
+        )
     profile = _get_admin_service().get_account_csr_profile(
         account_id,
     )
@@ -826,14 +1120,17 @@ def list_notifications() -> ResponseReturnValue:
     """List notifications with optional filters and pagination."""
     container = get_container()
     page_settings = container.settings.admin_api
+
     status = request.args.get("status")
-    limit = request.args.get(
-        "limit",
-        page_settings.default_page_size,
-        type=int,
-    )
-    offset = request.args.get("offset", 0, type=int)
-    limit = min(limit, page_settings.max_page_size)
+    valid_statuses = ("pending", "sent", "failed")
+    if status is not None and status not in valid_statuses:
+        raise AcmeProblem(
+            "about:blank",
+            f"Invalid status '{status}'. Must be one of: {', '.join(valid_statuses)}",
+            status=400,
+        )
+
+    limit, offset = _validate_pagination_params(page_settings)
     notifications = _get_admin_service().list_notifications(
         status,
         limit + 1,
@@ -921,21 +1218,31 @@ def search_certificates() -> ResponseReturnValue:
         "account_id",
         "serial",
         "fingerprint",
-        "status",
         "domain",
-        "expiring_before",
     ):
         val = request.args.get(key)
         if val:
             filters[key] = val
 
-    limit = request.args.get(
-        "limit",
-        page_settings.default_page_size,
-        type=int,
-    )
-    offset = request.args.get("offset", 0, type=int)
-    limit = min(limit, page_settings.max_page_size)
+    # Validate status
+    cert_status = request.args.get("status")
+    valid_cert_statuses = ("active", "revoked", "expired")
+    if cert_status is not None and cert_status not in valid_cert_statuses:
+        raise AcmeProblem(
+            "about:blank",
+            f"Invalid status '{cert_status}'. Must be one of: {', '.join(valid_cert_statuses)}",
+            status=400,
+        )
+    if cert_status:
+        filters["status"] = cert_status
+
+    # Validate expiring_before as ISO 8601
+    expiring_before = request.args.get("expiring_before")
+    if expiring_before:
+        _parse_iso_datetime(expiring_before, "expiring_before")
+        filters["expiring_before"] = expiring_before
+
+    limit, offset = _validate_pagination_params(page_settings)
 
     certs = _get_admin_service().search_certificates(
         filters,
@@ -1076,7 +1383,7 @@ def set_maintenance_mode() -> ResponseReturnValue:
             status=400,
         )
 
-    enabled = bool(data["enabled"])
+    enabled = _require_strict_bool(data, "enabled")
     shutdown_coord = current_app.extensions.get(
         "shutdown_coordinator",
     )
@@ -1143,6 +1450,13 @@ def bulk_revoke_certificates() -> ResponseReturnValue:  # noqa: C901
         )
 
     filt = data["filter"]
+    if not isinstance(filt, dict):
+        msg = "about:blank"
+        raise AcmeProblem(
+            msg,
+            "'filter' must be a JSON object",
+            status=400,
+        )
     reason_code = data.get("reason")
     dry_run = data.get("dry_run", False)
 
@@ -1162,15 +1476,23 @@ def bulk_revoke_certificates() -> ResponseReturnValue:  # noqa: C901
     cert_repo = container.certificates
 
     # Build query filters for certificate search
-    search_filters: dict[str, str] = {}
+    search_filters: dict[str, Any] = {}
     if "account_id" in filt:
         search_filters["account_id"] = filt["account_id"]
     if "domain" in filt:
         search_filters["domain"] = filt["domain"]
     if "issued_before" in filt:
         search_filters["expiring_before"] = filt["issued_before"]
-    if "status" not in search_filters:
-        search_filters["status"] = "active"
+
+    # Normalize serial_number (singular string) → serial_numbers (list)
+    serial_numbers = filt.get("serial_numbers")
+    if serial_numbers is None and "serial_number" in filt:
+        serial_numbers = [filt["serial_number"]]
+    if serial_numbers:
+        search_filters["serial_numbers"] = serial_numbers
+
+    # Default to active (non-revoked, non-expired) certificates
+    search_filters["status"] = "active"
 
     # Get matching certificates
     certs = _get_admin_service().search_certificates(
@@ -1179,12 +1501,7 @@ def bulk_revoke_certificates() -> ResponseReturnValue:  # noqa: C901
         offset=0,
     )
 
-    # Apply serial number filter if specified
-    if "serial_numbers" in filt:
-        serial_set = set(filt["serial_numbers"])
-        certs = [c for c in certs if c.serial_number in serial_set]
-
-    # Filter out already-revoked certificates
+    # Defence-in-depth: filter out already-revoked certificates
     certs = [c for c in certs if getattr(c, "revoked_at", None) is None]
 
     if dry_run:

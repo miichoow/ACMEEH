@@ -98,6 +98,9 @@ class TokenBlacklist:
                 log.exception(
                     "Failed to check DB token blacklist, checking memory",
                 )
+                from acmeeh.db.init import log_pool_stats  # noqa: PLC0415
+
+                log_pool_stats(self._db, "token_blacklist")
         with self._lock:
             return sig in self._revoked
 

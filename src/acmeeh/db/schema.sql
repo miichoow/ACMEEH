@@ -540,3 +540,53 @@ CREATE INDEX IF NOT EXISTS idx_challenges_stale_lookup
 INSERT INTO schema_migrations (version)
 VALUES ('007_stale_challenge_index')
 ON CONFLICT (version) DO NOTHING;
+
+-- =========================================================================
+-- EAB ↔ Allowed Identifier linkage (many-to-many)
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS admin.eab_allowed_identifiers (
+    eab_credential_id UUID NOT NULL
+        REFERENCES admin.eab_credentials(id) ON DELETE CASCADE,
+    allowed_identifier_id UUID NOT NULL
+        REFERENCES admin.allowed_identifiers(id) ON DELETE CASCADE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (eab_credential_id, allowed_identifier_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_eab_allowed_identifiers_identifier
+    ON admin.eab_allowed_identifiers (allowed_identifier_id);
+
+-- =========================================================================
+-- EAB ↔ CSR Profile linkage (one profile per EAB)
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS admin.eab_csr_profiles (
+    eab_credential_id UUID NOT NULL
+        REFERENCES admin.eab_credentials(id) ON DELETE CASCADE
+        PRIMARY KEY,
+    csr_profile_id UUID NOT NULL
+        REFERENCES admin.csr_profiles(id) ON DELETE CASCADE,
+    assigned_by UUID REFERENCES admin.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_eab_csr_profiles_profile
+    ON admin.eab_csr_profiles (csr_profile_id);
+
+-- Ensure assigned_by column exists (handles tables created before it was added)
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'admin'
+          AND table_name = 'eab_csr_profiles'
+          AND column_name = 'assigned_by'
+    ) THEN
+        ALTER TABLE admin.eab_csr_profiles
+            ADD COLUMN assigned_by UUID REFERENCES admin.users(id) ON DELETE SET NULL;
+    END IF;
+END;
+$$;
+
+INSERT INTO schema_migrations (version)
+VALUES ('008_eab_linkage')
+ON CONFLICT (version) DO NOTHING;
