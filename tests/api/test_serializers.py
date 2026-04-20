@@ -121,7 +121,8 @@ class TestSerializeDirectory:
             _stub_settings(profiles={"default": {}, "tlsServer": {}}),
         )
         assert "profiles" in d["meta"]
-        assert sorted(d["meta"]["profiles"]) == ["default", "tlsServer"]
+        assert isinstance(d["meta"]["profiles"], dict)
+        assert sorted(d["meta"]["profiles"].keys()) == ["default", "tlsServer"]
 
     def test_profiles_only_default_omitted(self):
         d = serialize_directory(

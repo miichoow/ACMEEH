@@ -52,11 +52,11 @@ def serialize_directory(
     if settings.order.pre_authorization_lifetime_days > 0:
         meta["authorizationLifetimeDays"] = settings.order.pre_authorization_lifetime_days
 
-    # Profiles extension
+    # Profiles extension (RFC 9727 §4: object mapping name → description URL)
     if settings.ca.profiles:
         profile_names = sorted(settings.ca.profiles.keys())
         if profile_names and profile_names != ["default"]:
-            meta["profiles"] = profile_names
+            meta["profiles"] = {name: "" for name in profile_names}
 
     if meta:
         result["meta"] = meta
