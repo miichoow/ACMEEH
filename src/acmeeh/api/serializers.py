@@ -56,7 +56,7 @@ def serialize_directory(
     if settings.ca.profiles:
         profile_names = sorted(settings.ca.profiles.keys())
         if profile_names and profile_names != ["default"]:
-            meta["profiles"] = {name: "" for name in profile_names}
+            meta["profiles"] = dict.fromkeys(profile_names, "")
 
     if meta:
         result["meta"] = meta
