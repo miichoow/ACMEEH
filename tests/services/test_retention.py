@@ -144,7 +144,7 @@ class TestNoticeRetention:
         sql, params = mock_db.execute.call_args[0]
 
         assert "DELETE FROM certificate_expiration_notices" in sql
-        assert "created_at" in sql
+        assert "notified_at" in sql
 
         cutoff = params[0]
         expected_min = before - timedelta(days=90)

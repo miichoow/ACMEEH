@@ -464,7 +464,7 @@ class CleanupWorker:
         CleanupWorker._batched_delete(
             db,
             table="certificate_expiration_notices",
-            where_clause="created_at < %s",
+            where_clause="notified_at < %s",
             params=(cutoff,),
             label="Notice retention",
         )
