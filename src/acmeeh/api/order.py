@@ -23,23 +23,10 @@ order_bp = Blueprint("order", __name__)
 
 
 @order_bp.route("/new-order", methods=["POST"], endpoint="new_order")
-@require_jws(use_kid=True)
+@require_jws(use_kid=True, block_on_maintenance=True)
 def new_order():
     """POST /new-order — create a new order."""
     container = get_container()
-
-    # Check maintenance mode
-    shutdown_coord = current_app.extensions.get("shutdown_coordinator")
-    if shutdown_coord is not None and shutdown_coord.maintenance_mode:
-        msg = "urn:ietf:params:acme:error:serverInternal"
-        raise AcmeProblem(
-            msg,
-            "Server is in maintenance mode — new orders are temporarily "
-            "unavailable. Existing orders can still be finalized.",
-            status=503,
-            headers={"Retry-After": "300"},
-        )
-
     payload = g.payload or {}
 
     # ARI renewal: if 'replaces' is present, create a renewal order

@@ -214,7 +214,7 @@ Create a new certificate order.
    **Maintenance Mode**
 
    When the server is in maintenance mode, this endpoint returns ``503 Service Unavailable``
-   with a ``Retry-After: 300`` header. Clients should wait the indicated number of seconds
+   with a ``Retry-After: 60`` header. Clients should wait the indicated number of seconds
    before retrying the request.
 
 **POST** ``/order/{order_id}``

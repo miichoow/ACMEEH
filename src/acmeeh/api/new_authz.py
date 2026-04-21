@@ -21,7 +21,7 @@ new_authz_bp = Blueprint("new_authz", __name__)
 
 
 @new_authz_bp.route("", methods=["POST"], endpoint="new_authz")
-@require_jws(use_kid=True)
+@require_jws(use_kid=True, block_on_maintenance=True)
 def new_authz():
     """POST /new-authz — create a pre-authorization."""
     container = get_container()

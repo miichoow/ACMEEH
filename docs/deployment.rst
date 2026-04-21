@@ -504,9 +504,9 @@ Behavior During Maintenance
    * - Operation
      - Behavior
    * - New order creation
-     - Returns ``503`` with ``Retry-After: 300``
+     - Returns ``503`` with ``Retry-After: 60``
    * - Pre-authorization creation
-     - Returns ``503`` with ``Retry-After: 300``
+     - Returns ``503`` with ``Retry-After: 60``
    * - Order finalization
      - Allowed (in-progress orders can complete)
    * - Challenge validation

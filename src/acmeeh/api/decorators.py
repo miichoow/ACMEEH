@@ -13,13 +13,14 @@ import functools
 import logging
 from uuid import UUID
 
-from flask import g, request
+from flask import current_app, g, request
 
 from acmeeh.app.context import get_container
 from acmeeh.app.errors import (
     ACCOUNT_DOES_NOT_EXIST,
     BAD_NONCE,
     MALFORMED,
+    SERVER_INTERNAL,
     UNAUTHORIZED,
     AcmeProblem,
 )
@@ -51,6 +52,11 @@ _NONCE_SKIP_PREFIXES = (
     "metrics.",
 )
 
+# Retry-After hint for maintenance-mode 503s.  Kept short enough that a
+# client holding a cached nonce can retry within the nonce TTL; long
+# enough that a brief maintenance window completes between retries.
+_MAINTENANCE_RETRY_AFTER_SECONDS = 60
+
 
 def add_acme_headers(response):
     """After-request hook: add standard ACME headers to every response.
@@ -70,19 +76,13 @@ def add_acme_headers(response):
 
     container = get_container()
 
-    # Skip nonce generation for error responses (4xx/5xx).  Clients
-    # that receive an error will request a fresh nonce explicitly via
-    # HEAD /new-nonce before retrying — no need to burn a pool
-    # connection here.
-    if response.status_code >= 400:  # noqa: PLR2004
-        response.headers["Link"] = f'<{container.urls.directory}>;rel="index"'
-        response.headers["Cache-Control"] = "no-store"
-        return response
-
     # Fresh nonce — uses create_if_healthy() which never blocks
     # waiting for a pool connection.  Returns None when the pool is
     # exhausted, so the response goes out without Replay-Nonce and
     # the client will request one explicitly via HEAD /new-nonce.
+    # RFC 8555 §6.5 requires Replay-Nonce on badNonce errors and
+    # recommends it on other error responses so clients can retry
+    # without an extra round-trip to HEAD /new-nonce.
     try:
         nonce = container.nonce_service.create_if_healthy()
         if nonce is not None:
@@ -106,6 +106,7 @@ def require_jws(
     *,
     use_kid: bool = True,
     allow_kid_or_jwk: bool = False,
+    block_on_maintenance: bool = False,
 ):
     """Decorator that enforces JWS authentication on an ACME endpoint.
 
@@ -117,6 +118,11 @@ def require_jws(
     allow_kid_or_jwk:
         If True, either ``kid`` or ``jwk`` is accepted (used for
         ``revokeCert``).
+    block_on_maintenance:
+        If True, reject the request with 503 when the server is in
+        maintenance mode.  The check runs *before* the nonce is
+        consumed so the client can retry the same JWS once the window
+        closes without triggering a ``badNonce``.
 
     """
 
@@ -156,6 +162,25 @@ def require_jws(
                 request_url=request_url,
                 allowed_algorithms=settings.security.allowed_algorithms,
             )
+
+            # 5b. Reject in maintenance mode *before* consuming the
+            # nonce so the client can retry with the same JWS once
+            # maintenance clears (otherwise it would see badNonce on
+            # retry, since error responses used to also omit
+            # Replay-Nonce).
+            if block_on_maintenance:
+                shutdown_coord = current_app.extensions.get("shutdown_coordinator")
+                if shutdown_coord is not None and shutdown_coord.maintenance_mode:
+                    raise AcmeProblem(
+                        SERVER_INTERNAL,
+                        "Server is in maintenance mode — new orders and "
+                        "pre-authorizations are temporarily unavailable. "
+                        "Existing orders can still be finalized.",
+                        status=503,
+                        headers={
+                            "Retry-After": str(_MAINTENANCE_RETRY_AFTER_SECONDS),
+                        },
+                    )
 
             # 6. Consume nonce
             if not container.nonce_service.consume(jws.nonce):
