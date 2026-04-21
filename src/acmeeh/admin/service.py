@@ -133,7 +133,7 @@ class AdminUserService:
             role=role,
             enabled=True,
         )
-        self._users.create(user)
+        user = self._users.create(user)
 
         self._log_action(
             actor_id,
@@ -304,7 +304,7 @@ class AdminUserService:
             role=AdminRole.ADMIN,
             enabled=True,
         )
-        self._users.create(user)
+        user = self._users.create(user)
 
         self._log_action(
             None,
@@ -473,7 +473,7 @@ class AdminUserService:
             label=label,
             created_by=actor_id,
         )
-        self._eab.create(cred)
+        cred = self._eab.create(cred)
 
         self._log_action(
             actor_id,
@@ -834,7 +834,7 @@ class AdminUserService:
             identifier_value=identifier_value,
             created_by=actor_id,
         )
-        self._allowlist.create(ident)
+        ident = self._allowlist.create(ident)
 
         self._log_action(
             actor_id,
@@ -1130,7 +1130,7 @@ class AdminUserService:
             profile_data=profile_data,
             created_by=actor_id,
         )
-        self._csr_profiles.create(profile)
+        profile = self._csr_profiles.create(profile)
 
         self._log_action(
             actor_id,
