@@ -367,3 +367,52 @@ class TestNonceServiceBatchCreation:
         token = svc.create()
         assert token is not None
         repo.create.assert_called_once()
+
+    def test_create_discards_aged_out_buffer_entries(self):
+        """Aged-out tokens in the in-memory buffer must not be served.
+
+        Regression: on a low-traffic worker the deque can still hold
+        tokens issued more than ``expiry_seconds`` ago. The DB's
+        nonce_gc task has already deleted the matching rows, so handing
+        them out surfaces to the client as ``badNonce`` on every POST.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        repo = MagicMock()
+        repo.bulk_create.return_value = 100
+
+        settings = _nonce_settings()
+        svc = NonceService(repo, settings)
+
+        # Seed the buffer with entries that expired 1 second ago.
+        past = datetime.now(UTC) - timedelta(seconds=1)
+        svc._buffer.extend(
+            (f"stale-{i}", past) for i in range(10)
+        )
+
+        token = svc.create()
+
+        # A refill was forced (stale entries dropped), and the returned
+        # token is one of the freshly generated ones, not a stale one.
+        repo.bulk_create.assert_called_once()
+        assert not token.startswith("stale-")
+        assert all(not t.startswith("stale-") for t, _ in svc._buffer)
+
+    def test_create_if_healthy_discards_aged_out_buffer_entries(self):
+        """``create_if_healthy`` must also drop aged-out entries."""
+        from datetime import UTC, datetime, timedelta
+
+        repo = MagicMock()
+        repo.bulk_create.return_value = 100
+
+        settings = _nonce_settings()
+        svc = NonceService(repo, settings)
+
+        past = datetime.now(UTC) - timedelta(seconds=1)
+        svc._buffer.extend((f"stale-{i}", past) for i in range(10))
+
+        token = svc.create_if_healthy()
+
+        assert token is not None
+        assert not token.startswith("stale-")
+        repo.bulk_create.assert_called_once()

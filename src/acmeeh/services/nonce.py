@@ -53,8 +53,11 @@ class NonceService:
     ) -> None:
         self._repo = nonce_repo
         self._settings = settings
-        # Pre-generated nonce buffer — serves nonces without per-response DB hits
-        self._buffer: collections.deque[str] = collections.deque()
+        # Pre-generated nonce buffer — serves nonces without per-response DB hits.
+        # Each entry is ``(token, expires_at)`` so we can drop entries that
+        # aged out while sitting in the deque (low-traffic workers otherwise
+        # hand out tokens the DB GC has already removed).
+        self._buffer: collections.deque[tuple[str, datetime]] = collections.deque()
         self._buffer_lock = threading.Lock()
         self._last_refill_failure: float = 0.0
 
@@ -69,15 +72,20 @@ class NonceService:
         ``connection_timeout`` seconds.
         """
         with self._buffer_lock:
-            if not self._buffer:
-                try:
-                    self._refill_buffer()
-                except Exception:  # noqa: BLE001
-                    log.debug(
-                        "Batch nonce generation failed, falling back to single insert",
-                    )
-                    return self._create_single()
-            return self._buffer.popleft()
+            token = self._pop_valid_locked()
+            if token is not None:
+                return token
+            try:
+                self._refill_buffer()
+            except Exception:  # noqa: BLE001
+                log.debug(
+                    "Batch nonce generation failed, falling back to single insert",
+                )
+                return self._create_single()
+            token = self._pop_valid_locked()
+            if token is not None:
+                return token
+        return self._create_single()
 
     def create_if_healthy(self) -> str | None:
         """Return a nonce if the pool can serve one, else ``None``.
@@ -88,18 +96,33 @@ class NonceService:
         """
         # Serve from buffer first — no DB needed
         with self._buffer_lock:
-            if self._buffer:
-                return self._buffer.popleft()
+            token = self._pop_valid_locked()
+            if token is not None:
+                return token
 
-        # Buffer empty — only refill if pool is healthy
+        # Buffer empty (or fully expired) — only refill if pool is healthy
         try:
             self._refill_buffer()
-            with self._buffer_lock:
-                if self._buffer:
-                    return self._buffer.popleft()
         except Exception:  # noqa: BLE001
             log.debug("Nonce generation skipped — pool likely exhausted")
+            return None
 
+        with self._buffer_lock:
+            return self._pop_valid_locked()
+
+    def _pop_valid_locked(self) -> str | None:
+        """Pop the next non-expired token from the buffer (caller holds the lock).
+
+        Discards aged-out entries: the DB's ``nonce_gc`` task deletes
+        rows past ``expires_at``, so handing out such a token would
+        always fail ``consume()`` and surface as ``badNonce`` to the
+        client.
+        """
+        now = datetime.now(UTC)
+        while self._buffer:
+            token, expires_at = self._buffer.popleft()
+            if expires_at > now:
+                return token
         return None
 
     def _refill_buffer(self) -> None:
@@ -115,7 +138,7 @@ class NonceService:
             for _ in range(_BATCH_SIZE)
         ]
         self._repo.bulk_create(batch)
-        self._buffer.extend(n.nonce for n in batch)
+        self._buffer.extend((n.nonce, n.expires_at) for n in batch)
 
     def _create_single(self) -> str:
         """Create and persist a single nonce (fallback when batch fails)."""
