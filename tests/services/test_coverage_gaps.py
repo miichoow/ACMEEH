@@ -386,9 +386,7 @@ class TestNonceServiceBatchCreation:
 
         # Seed the buffer with entries that expired 1 second ago.
         past = datetime.now(UTC) - timedelta(seconds=1)
-        svc._buffer.extend(
-            (f"stale-{i}", past) for i in range(10)
-        )
+        svc._buffer.extend((f"stale-{i}", past) for i in range(10))
 
         token = svc.create()
 
