@@ -110,6 +110,23 @@ class StubAdminUserRepo:
         return []
 
 
+class StubAccountRepo:
+    """In-memory stub that treats every queried UUID as an existing account.
+
+    Tests that need to assert the 404 path should use ``StubAccountRepo(known=set())``
+    and query with a UUID not in that set.
+    """
+
+    def __init__(self, known: set[UUID] | None = None, accept_all: bool = True):
+        self._known: set[UUID] = known if known is not None else set()
+        self._accept_all = accept_all
+
+    def find_by_id(self, id_: UUID):
+        if self._accept_all or id_ in self._known:
+            return object()
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -139,12 +156,18 @@ def audit_repo():
 
 
 @pytest.fixture()
-def service(allowlist_repo, audit_repo):
+def account_repo():
+    return StubAccountRepo(accept_all=True)
+
+
+@pytest.fixture()
+def service(allowlist_repo, audit_repo, account_repo):
     return AdminUserService(
         StubAdminUserRepo(),
         audit_repo,
         _make_settings(),
         allowlist_repo=allowlist_repo,
+        account_repo=account_repo,
     )
 
 
@@ -312,6 +335,45 @@ class TestAccountAssociation:
     def test_add_to_nonexistent_identifier(self, service):
         with pytest.raises(Exception) as exc_info:
             service.add_identifier_account(uuid4(), uuid4())
+        assert "404" in str(exc_info.value.status)
+
+    def test_add_with_nonexistent_account_returns_404(
+        self,
+        allowlist_repo,
+        audit_repo,
+    ):
+        """Regression: a non-existent account UUID must surface as 404, not 500.
+
+        Previously the FK violation on ``admin.account_allowed_identifiers.account_id``
+        escaped as an unhandled exception.
+        """
+        svc = AdminUserService(
+            StubAdminUserRepo(),
+            audit_repo,
+            _make_settings(),
+            allowlist_repo=allowlist_repo,
+            account_repo=StubAccountRepo(accept_all=False),
+        )
+        ident = svc.create_allowed_identifier("dns", "no-such-account.com")
+        with pytest.raises(Exception) as exc_info:
+            svc.add_identifier_account(ident.id, uuid4())
+        assert "404" in str(exc_info.value.status)
+
+    def test_remove_with_nonexistent_account_returns_404(
+        self,
+        allowlist_repo,
+        audit_repo,
+    ):
+        svc = AdminUserService(
+            StubAdminUserRepo(),
+            audit_repo,
+            _make_settings(),
+            allowlist_repo=allowlist_repo,
+            account_repo=StubAccountRepo(accept_all=False),
+        )
+        ident = svc.create_allowed_identifier("dns", "rm-no-such.com")
+        with pytest.raises(Exception) as exc_info:
+            svc.remove_identifier_account(ident.id, uuid4())
         assert "404" in str(exc_info.value.status)
 
     def test_audit_log_on_add(self, service, audit_repo):

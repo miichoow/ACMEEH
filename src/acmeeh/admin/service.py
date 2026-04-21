@@ -26,6 +26,7 @@ if TYPE_CHECKING:
         EabCredentialRepository,
     )
     from acmeeh.config.settings import AdminApiSettings
+    from acmeeh.repositories.account import AccountRepository
     from acmeeh.repositories.certificate import CertificateRepository
     from acmeeh.repositories.notification import NotificationRepository
     from acmeeh.services.notification import NotificationService
@@ -47,6 +48,7 @@ class AdminUserService:
         csr_profile_repo: CsrProfileRepository | None = None,
         notification_repo: NotificationRepository | None = None,
         cert_repo: CertificateRepository | None = None,
+        account_repo: AccountRepository | None = None,
     ) -> None:
         """Initialize the admin user service with repositories and settings."""
         self._users = user_repo
@@ -58,6 +60,7 @@ class AdminUserService:
         self._csr_profiles = csr_profile_repo
         self._notification_repo = notification_repo
         self._cert_repo = cert_repo
+        self._accounts = account_repo
 
     def authenticate(
         self,
@@ -939,6 +942,14 @@ class AdminUserService:
                 status=404,
             )
 
+        if self._accounts is not None and self._accounts.find_by_id(account_id) is None:
+            msg = "about:blank"
+            raise AcmeProblem(
+                msg,
+                "ACME account not found",
+                status=404,
+            )
+
         self._allowlist.add_account_association(
             identifier_id,
             account_id,
@@ -979,6 +990,14 @@ class AdminUserService:
             raise AcmeProblem(
                 msg,
                 "Allowed identifier not found",
+                status=404,
+            )
+
+        if self._accounts is not None and self._accounts.find_by_id(account_id) is None:
+            msg = "about:blank"
+            raise AcmeProblem(
+                msg,
+                "ACME account not found",
                 status=404,
             )
 

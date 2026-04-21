@@ -252,6 +252,7 @@ class Container:
                 csr_profile_repo=(self.admin_csr_profile_repo),
                 notification_repo=self.notification_repo,
                 cert_repo=self.certificates,
+                account_repo=self.accounts,
             )
 
         self.account_service: AccountService = _AccS(
