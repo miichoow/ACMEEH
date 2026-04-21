@@ -100,6 +100,65 @@ class TestMaintenanceMode:
         sc.set_maintenance(False)
         assert sc.maintenance_mode is False
 
+    def test_toggle_propagates_across_workers_via_settings_repo(self):
+        """Regression: maintenance toggles on one worker must be seen by
+        every other worker, since each gunicorn process has its own
+        ShutdownCoordinator.  We simulate that by pointing two
+        coordinators at one shared settings repository, the way all
+        workers in production point at the same Postgres.
+        """
+
+        class _FakeRepo:
+            def __init__(self):
+                self.store: dict = {}
+
+            def get(self, key):
+                return self.store.get(key)
+
+            def set(self, key, value):
+                self.store[key] = value
+
+        repo = _FakeRepo()
+        # TTL=0 so each read refetches — mirrors what happens in prod
+        # once the cache window has elapsed, without needing time.sleep.
+        worker_a = ShutdownCoordinator(
+            settings_repo=repo,
+            maintenance_cache_ttl=0,
+        )
+        worker_b = ShutdownCoordinator(
+            settings_repo=repo,
+            maintenance_cache_ttl=0,
+        )
+
+        assert worker_a.maintenance_mode is False
+        assert worker_b.maintenance_mode is False
+
+        worker_a.set_maintenance(True)
+
+        assert worker_a.maintenance_mode is True
+        assert worker_b.maintenance_mode is True
+
+        worker_a.set_maintenance(False)
+
+        assert worker_a.maintenance_mode is False
+        assert worker_b.maintenance_mode is False
+
+    def test_falls_back_to_in_memory_when_repo_read_fails(self):
+        class _BrokenRepo:
+            def get(self, key):
+                raise RuntimeError("db down")
+
+            def set(self, key, value):
+                raise RuntimeError("db down")
+
+        sc = ShutdownCoordinator(
+            settings_repo=_BrokenRepo(),
+            maintenance_cache_ttl=0,
+        )
+        # With no prior write, the local flag is clear, so a failed
+        # read should surface as "not in maintenance".
+        assert sc.maintenance_mode is False
+
 
 # ---------------------------------------------------------------------------
 # TestReload

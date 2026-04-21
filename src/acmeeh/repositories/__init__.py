@@ -11,6 +11,7 @@ from acmeeh.repositories.challenge import ChallengeRepository
 from acmeeh.repositories.nonce import NonceRepository
 from acmeeh.repositories.notification import NotificationRepository
 from acmeeh.repositories.order import OrderRepository
+from acmeeh.repositories.server_settings import ServerSettingsRepository
 
 __all__ = [
     "AccountContactRepository",
@@ -21,4 +22,5 @@ __all__ = [
     "NonceRepository",
     "NotificationRepository",
     "OrderRepository",
+    "ServerSettingsRepository",
 ]

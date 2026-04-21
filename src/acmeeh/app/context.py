@@ -50,6 +50,7 @@ if TYPE_CHECKING:
         NonceRepository,
         NotificationRepository,
         OrderRepository,
+        ServerSettingsRepository,
     )
     from acmeeh.services import (
         AccountService,
@@ -107,6 +108,9 @@ class Container:
         from acmeeh.repositories import (  # noqa: PLC0415
             OrderRepository as _OR,  # noqa: N814
         )
+        from acmeeh.repositories import (  # noqa: PLC0415
+            ServerSettingsRepository as _SSR,  # noqa: N814
+        )
 
         self.db: Database = db
         self.settings: AcmeehSettings = settings
@@ -124,6 +128,12 @@ class Container:
             audit_consumed=settings.nonce.audit_consumed,
         )
         self.notification_repo: NotificationRepository = _NoR(db)
+        self.server_settings: ServerSettingsRepository = _SSR(db)
+
+        # Wire the shared-state store into the shutdown coordinator so
+        # maintenance-mode toggles are visible to every gunicorn worker.
+        if shutdown_coordinator is not None:
+            shutdown_coordinator.attach_settings_repo(self.server_settings)
 
         # Core utilities
         from acmeeh.ca.registry import load_ca_backend as _load_ca  # noqa: PLC0415

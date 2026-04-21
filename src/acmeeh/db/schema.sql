@@ -590,3 +590,16 @@ $$;
 INSERT INTO schema_migrations (version)
 VALUES ('008_eab_linkage')
 ON CONFLICT (version) DO NOTHING;
+
+-- =========================================================================
+-- Server settings (cross-worker shared state — e.g. maintenance mode)
+-- =========================================================================
+CREATE TABLE IF NOT EXISTS server_settings (
+    key         TEXT         PRIMARY KEY,
+    value       JSONB        NOT NULL,
+    updated_at  TIMESTAMPTZ  NOT NULL DEFAULT now()
+);
+
+INSERT INTO schema_migrations (version)
+VALUES ('009_server_settings')
+ON CONFLICT (version) DO NOTHING;
