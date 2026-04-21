@@ -1211,11 +1211,14 @@ class TestNotificationRepository:
         assert repo.purge_old(30) == 10
 
     @patch("acmeeh.repositories.notification.Database")
-    def test_reset_failed_for_retry(self, MockDB):
+    def test_find_all_failed(self, MockDB):
         db = MockDB.get_instance.return_value
-        db.execute.return_value = 3
+        row = _notification_row(status=NotificationStatus.FAILED.value)
+        db.fetch_all.return_value = [row]
         repo = self._make_repo(db)
-        assert repo.reset_failed_for_retry() == 3
+        result = repo.find_all_failed()
+        assert len(result) == 1
+        assert result[0].status == NotificationStatus.FAILED
 
 
 # ======================================================================

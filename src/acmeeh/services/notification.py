@@ -185,6 +185,39 @@ class NotificationService:
 
         return retried
 
+    def retry_all_failed(self) -> int:
+        """Immediately resend every failed notification (admin-triggered).
+
+        Unlike :meth:`retry_failed`, this bypasses the backoff delay and
+        ``max_retries`` limit — an operator has explicitly asked for an
+        immediate resend. Returns the number actually sent.
+        """
+        if not self._settings.enabled or not self._smtp.enabled:
+            return 0
+
+        failed = self._notifications.find_all_failed()
+
+        retried = 0
+        for notification in failed:
+            success = self._send_email(
+                notification.recipient,
+                notification.subject,
+                notification.body,
+            )
+            if success:
+                self._notifications.mark_sent(notification.id)
+                retried += 1
+            else:
+                self._notifications.mark_failed(
+                    notification.id,
+                    "SMTP retry failed",
+                )
+
+        if failed:
+            log.info("Admin retry sent %d/%d failed notifications", retried, len(failed))
+
+        return retried
+
     def _send_email(self, recipient: str, subject: str, body: str) -> bool:
         """Send a single email via SMTP.
 

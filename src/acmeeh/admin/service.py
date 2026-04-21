@@ -360,10 +360,10 @@ class AdminUserService:
         )
 
     def retry_failed_notifications(self) -> int:
-        """Reset failed notifications for retry. Return count."""
-        if self._notification_repo is None:
+        """Immediately resend failed notifications. Return count sent."""
+        if self._notifications is None:
             return 0
-        return self._notification_repo.reset_failed_for_retry()
+        return self._notifications.retry_all_failed()
 
     def purge_notifications(self, days: int) -> int:
         """Purge sent notifications older than days. Return count."""

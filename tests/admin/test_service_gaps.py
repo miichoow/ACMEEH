@@ -133,14 +133,14 @@ class TestListNotifications:
 
 
 class TestRetryFailedNotifications:
-    def test_returns_zero_when_no_repo(self, service):
+    def test_returns_zero_when_no_notification_service(self, service):
         result = service.retry_failed_notifications()
         assert result == 0
 
-    def test_delegates_to_repo(self, full_service, notification_repo):
-        notification_repo.reset_failed_for_retry.return_value = 3
+    def test_delegates_to_notification_service(self, full_service, notification_service):
+        notification_service.retry_all_failed.return_value = 3
         result = full_service.retry_failed_notifications()
-        notification_repo.reset_failed_for_retry.assert_called_once()
+        notification_service.retry_all_failed.assert_called_once_with()
         assert result == 3
 
 

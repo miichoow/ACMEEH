@@ -319,6 +319,46 @@ class TestRetryFailed:
 
 
 # ---------------------------------------------------------------------------
+# retry_all_failed
+# ---------------------------------------------------------------------------
+
+
+class TestRetryAllFailed:
+    def test_returns_zero_when_notifications_disabled(self):
+        svc = _make_service(notification_settings=_notification_settings(enabled=False))
+        assert svc.retry_all_failed() == 0
+
+    def test_returns_zero_when_smtp_disabled(self):
+        svc = _make_service(
+            smtp_settings=_smtp_settings(enabled=False),
+            notification_settings=_notification_settings(enabled=True),
+        )
+        assert svc.retry_all_failed() == 0
+
+    def test_sends_all_failed_ignoring_backoff_and_max_retries(self):
+        notif_repo = MagicMock()
+        n1 = _make_notification(recipient="a@b.com", subject="S1", body="B1")
+        n2 = _make_notification(recipient="c@d.com", subject="S2", body="B2")
+        notif_repo.find_all_failed.return_value = [n1, n2]
+
+        svc = _make_service(
+            notification_repo=notif_repo,
+            smtp_settings=_smtp_settings(enabled=True),
+            notification_settings=_notification_settings(enabled=True),
+        )
+
+        with patch.object(svc, "_send_email", side_effect=[True, False]) as mock_send:
+            retried = svc.retry_all_failed()
+
+        assert retried == 1
+        assert mock_send.call_count == 2
+        notif_repo.find_all_failed.assert_called_once_with()
+        notif_repo.find_pending_retry.assert_not_called()
+        notif_repo.mark_sent.assert_called_once_with(n1.id)
+        notif_repo.mark_failed.assert_called_once_with(n2.id, "SMTP retry failed")
+
+
+# ---------------------------------------------------------------------------
 # _send_email
 # ---------------------------------------------------------------------------
 

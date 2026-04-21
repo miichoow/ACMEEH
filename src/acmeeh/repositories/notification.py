@@ -154,10 +154,20 @@ class NotificationRepository(BaseRepository[Notification]):
             (NotificationStatus.SENT.value, days),
         )
 
-    def reset_failed_for_retry(self) -> int:
-        """Reset all failed notifications to pending for retry. Returns count."""
+    def find_all_failed(self) -> list[Notification]:
+        """Find all failed notifications, ignoring backoff and max_retries.
+
+        Intended for admin-triggered retries: the caller is explicitly
+        forcing a resend now, so the scheduler-oriented filters used by
+        ``find_pending_retry`` do not apply.
+        """
         db = Database.get_instance()
-        return db.execute(
-            "UPDATE notifications SET status = %s WHERE status = %s",
-            (NotificationStatus.PENDING.value, NotificationStatus.FAILED.value),
+        rows = db.fetch_all(
+            "SELECT * FROM notifications "
+            "WHERE status = %s "
+            "ORDER BY created_at "
+            "FOR UPDATE SKIP LOCKED",
+            (NotificationStatus.FAILED.value,),
+            as_dict=True,
         )
+        return [self._row_to_entity(r) for r in rows]
