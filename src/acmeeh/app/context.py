@@ -253,6 +253,7 @@ class Container:
                 notification_repo=self.notification_repo,
                 cert_repo=self.certificates,
                 account_repo=self.accounts,
+                account_contact_repo=self.account_contacts,
             )
 
         self.account_service: AccountService = _AccS(

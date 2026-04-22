@@ -24,6 +24,7 @@ from acmeeh.admin.pagination import (
     encode_cursor,
 )
 from acmeeh.admin.serializers import (
+    serialize_account,
     serialize_admin_user,
     serialize_allowed_identifier,
     serialize_audit_log,
@@ -1190,6 +1191,107 @@ def purge_notifications() -> ResponseReturnValue:
     )
 
     return jsonify({"purged": count})
+
+
+# -------------------------------------------------------------------
+# ACME account inspection
+# -------------------------------------------------------------------
+
+
+_ACCOUNT_STATUSES = ("valid", "deactivated", "revoked")
+
+
+def _is_redacted_role() -> bool:
+    """Auditor role sees the redacted view (no JWK)."""
+    return g.admin_user.role.value == AdminRole.AUDITOR.value
+
+
+@admin_bp.route("/accounts", methods=["GET"])
+@require_admin_auth
+@require_role("admin", "auditor")
+def list_accounts() -> ResponseReturnValue:
+    """List ACME accounts with optional filters."""
+    container = get_container()
+    page_settings = container.settings.admin_api
+
+    filters: dict[str, Any] = {}
+
+    status_val = request.args.get("status")
+    if status_val is not None:
+        if status_val not in _ACCOUNT_STATUSES:
+            raise AcmeProblem(
+                "about:blank",
+                f"Invalid status '{status_val}'. Must be one of: {', '.join(_ACCOUNT_STATUSES)}",
+                status=400,
+            )
+        filters["status"] = status_val
+
+    eab_only = request.args.get("eab_only")
+    if eab_only is not None:
+        if eab_only.lower() not in ("true", "false", "1", "0"):
+            raise AcmeProblem(
+                "about:blank",
+                "'eab_only' must be true or false",
+                status=400,
+            )
+        if eab_only.lower() in ("true", "1"):
+            filters["eab_only"] = True
+
+    eab_kid = request.args.get("eab_kid")
+    if eab_kid:
+        filters["eab_kid"] = eab_kid
+
+    contact = request.args.get("contact")
+    if contact:
+        filters["contact"] = contact
+
+    for key in ("created_before", "created_after"):
+        val = request.args.get(key)
+        if val:
+            filters[key] = _parse_iso_datetime(val, key)
+
+    limit, offset = _validate_pagination_params(page_settings)
+
+    accounts, eab_kids = _get_admin_service().list_accounts(
+        filters,
+        limit + 1,
+        offset,
+    )
+
+    has_next = len(accounts) > limit
+    accounts = accounts[:limit]
+
+    redacted = _is_redacted_role()
+    data = [serialize_account(a, eab_kid=eab_kids.get(a.id), redacted=redacted) for a in accounts]
+    response = jsonify(data)
+
+    if has_next and accounts:
+        next_cursor = encode_cursor(accounts[-1].id)
+        link = build_link_header(
+            request.base_url,
+            next_cursor,
+            limit,
+        )
+        if link:
+            response.headers["Link"] = link
+    return response
+
+
+@admin_bp.route("/accounts/<uuid:account_id>", methods=["GET"])
+@require_admin_auth
+@require_role("admin", "auditor")
+def get_account(account_id: UUID) -> ResponseReturnValue:
+    """Get an ACME account by ID, including contacts, EAB kid, and CSR profile."""
+    account, contacts, eab_kid, profile_id = _get_admin_service().get_account(account_id)
+    return jsonify(
+        serialize_account(
+            account,
+            contacts=contacts,
+            eab_kid=eab_kid,
+            csr_profile_id=profile_id,
+            redacted=_is_redacted_role(),
+        ),
+    )
 
 
 # -------------------------------------------------------------------

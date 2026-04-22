@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from uuid import UUID
+
     from acmeeh.admin.models import (
         AdminUser,
         AllowedIdentifier,
@@ -12,6 +14,7 @@ if TYPE_CHECKING:
         CsrProfile,
         EabCredential,
     )
+    from acmeeh.models.account import Account, AccountContact
 
 
 def serialize_admin_user(user: AdminUser) -> dict:
@@ -121,6 +124,37 @@ def serialize_notification(notification) -> dict:
         "created_at": notification.created_at.isoformat(),
         "sent_at": notification.sent_at.isoformat() if notification.sent_at else None,
     }
+
+
+def serialize_account(
+    account: Account,
+    *,
+    contacts: list[AccountContact] | None = None,
+    eab_kid: str | None = None,
+    csr_profile_id: UUID | None = None,
+    redacted: bool = False,
+) -> dict:
+    """Serialize an ACME account.
+
+    When ``redacted=True`` (e.g. auditor role), omit the full JWK and
+    expose only the thumbprint.
+    """
+    result: dict[str, Any] = {
+        "id": str(account.id),
+        "jwk_thumbprint": account.jwk_thumbprint,
+        "status": account.status.value,
+        "tos_agreed": account.tos_agreed,
+        "eab_kid": eab_kid,
+        "created_at": account.created_at.isoformat(),
+        "updated_at": account.updated_at.isoformat(),
+    }
+    if not redacted:
+        result["jwk"] = account.jwk
+    if contacts is not None:
+        result["contacts"] = [c.contact_uri for c in contacts]
+    if csr_profile_id is not None:
+        result["csr_profile_id"] = str(csr_profile_id)
+    return result
 
 
 def serialize_certificate(cert) -> dict:

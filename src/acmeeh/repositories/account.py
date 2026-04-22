@@ -75,6 +75,77 @@ class AccountRepository(BaseRepository[Account]):
             )
         return self._row_to_entity(row) if row else None
 
+    def search(
+        self,
+        filters: dict,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[Account]:
+        """Search accounts with dynamic filters.
+
+        Supported keys: ``status``, ``eab_only`` (bool), ``eab_kid``,
+        ``contact`` (substring on contact URI), ``created_before``,
+        ``created_after``.
+        """
+        db = Database.get_instance()
+        conditions: list[str] = []
+        params: list = []
+
+        if "status" in filters:
+            conditions.append("status = %s")
+            params.append(filters["status"])
+
+        if filters.get("eab_only") or "eab_kid" in filters:
+            sub_conditions = ["account_id IS NOT NULL"]
+            sub_params: list = []
+            if "eab_kid" in filters:
+                sub_conditions.append("kid = %s")
+                sub_params.append(filters["eab_kid"])
+            sub_where = " AND ".join(sub_conditions)
+            conditions.append(
+                f"id IN (SELECT account_id FROM admin.eab_credentials WHERE {sub_where})",
+            )
+            params.extend(sub_params)
+
+        if "contact" in filters:
+            conditions.append(
+                "id IN (SELECT account_id FROM account_contacts WHERE contact_uri ILIKE %s)",
+            )
+            params.append(f"%{filters['contact']}%")
+
+        if "created_before" in filters:
+            conditions.append("created_at < %s")
+            params.append(filters["created_before"])
+        if "created_after" in filters:
+            conditions.append("created_at > %s")
+            params.append(filters["created_after"])
+
+        where = " AND ".join(conditions) if conditions else "TRUE"
+        query = (
+            f"SELECT * FROM accounts WHERE {where} "
+            "ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s"
+        )
+        params.extend([limit, offset])
+        rows = db.fetch_all(query, tuple(params), as_dict=True)
+        return [self._row_to_entity(r) for r in rows]
+
+    def find_eab_kids_for_accounts(
+        self,
+        account_ids: list[UUID],
+    ) -> dict[UUID, str]:
+        """Return a mapping of account_id -> EAB kid for bound accounts."""
+        if not account_ids:
+            return {}
+        db = Database.get_instance()
+        placeholders = ", ".join(["%s"] * len(account_ids))
+        rows = db.fetch_all(
+            f"SELECT account_id, kid FROM admin.eab_credentials "  # noqa: S608
+            f"WHERE account_id IN ({placeholders})",
+            tuple(account_ids),
+            as_dict=True,
+        )
+        return {r["account_id"]: r["kid"] for r in rows}
+
     def deactivate(self, account_id: UUID) -> Account | None:
         """Atomically transition an account from valid → deactivated.
 

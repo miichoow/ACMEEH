@@ -26,7 +26,8 @@ if TYPE_CHECKING:
         EabCredentialRepository,
     )
     from acmeeh.config.settings import AdminApiSettings
-    from acmeeh.repositories.account import AccountRepository
+    from acmeeh.models.account import Account, AccountContact
+    from acmeeh.repositories.account import AccountContactRepository, AccountRepository
     from acmeeh.repositories.certificate import CertificateRepository
     from acmeeh.repositories.notification import NotificationRepository
     from acmeeh.services.notification import NotificationService
@@ -49,6 +50,7 @@ class AdminUserService:
         notification_repo: NotificationRepository | None = None,
         cert_repo: CertificateRepository | None = None,
         account_repo: AccountRepository | None = None,
+        account_contact_repo: AccountContactRepository | None = None,
     ) -> None:
         """Initialize the admin user service with repositories and settings."""
         self._users = user_repo
@@ -61,6 +63,7 @@ class AdminUserService:
         self._notification_repo = notification_repo
         self._cert_repo = cert_repo
         self._accounts = account_repo
+        self._account_contacts = account_contact_repo
 
     def authenticate(
         self,
@@ -408,6 +411,57 @@ class AdminUserService:
                 status=404,
             )
         return cert
+
+    # -- ACME account inspection --
+
+    def list_accounts(
+        self,
+        filters: dict[str, Any],
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[Account], dict[UUID, str]]:
+        """List ACME accounts with filters.
+
+        Returns the page of accounts plus a mapping of
+        ``account_id -> EAB kid`` for accounts on the page that were
+        created via External Account Binding.
+        """
+        if self._accounts is None:
+            return [], {}
+        accounts = self._accounts.search(filters, limit, offset)
+        eab_kids = self._accounts.find_eab_kids_for_accounts([a.id for a in accounts])
+        return accounts, eab_kids
+
+    def get_account(
+        self,
+        account_id: UUID,
+    ) -> tuple[Account, list[AccountContact], str | None, UUID | None]:
+        """Return an account with its contacts, EAB kid, and CSR profile ID."""
+        from acmeeh.app.errors import AcmeProblem  # noqa: PLC0415
+
+        if self._accounts is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "Account lookup is not available", status=503)
+
+        account = self._accounts.find_by_id(account_id)
+        if account is None:
+            msg = "about:blank"
+            raise AcmeProblem(msg, "ACME account not found", status=404)
+
+        contacts: list[AccountContact] = []
+        if self._account_contacts is not None:
+            contacts = self._account_contacts.find_by_account(account_id)
+
+        kid_map = self._accounts.find_eab_kids_for_accounts([account_id])
+        eab_kid = kid_map.get(account_id)
+
+        profile_id: UUID | None = None
+        if self._csr_profiles is not None:
+            profile = self._csr_profiles.find_profile_for_account(account_id)
+            if profile is not None:
+                profile_id = profile.id
+
+        return account, contacts, eab_kid, profile_id
 
     # -- Audit log search --
 
