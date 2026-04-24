@@ -31,6 +31,7 @@ class AccountRepository(BaseRepository[Account]):
             tos_agreed=row["tos_agreed"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            eab_credential_id=row.get("eab_credential_id"),
         )
 
     def _entity_to_row(self, entity: Account) -> dict:
@@ -40,6 +41,7 @@ class AccountRepository(BaseRepository[Account]):
             "jwk": Jsonb(entity.jwk),
             "status": entity.status.value,
             "tos_agreed": entity.tos_agreed,
+            "eab_credential_id": entity.eab_credential_id,
         }
 
     def find_by_thumbprint(self, thumbprint: str) -> Account | None:
@@ -164,6 +166,24 @@ class AccountRepository(BaseRepository[Account]):
                 account_id,
             )
         return self._row_to_entity(row) if row else None
+
+    def find_valid_by_eab_credential(self, eab_credential_id: UUID) -> list[Account]:
+        """Return all ``valid`` accounts registered with the given EAB.
+
+        Uses the immutable ``accounts.eab_credential_id`` column rather
+        than the mutable ``admin.eab_credentials.account_id`` pointer,
+        so all historical registrations are returned even when the EAB
+        has since been re-bound to another account.
+        """
+        db = Database.get_instance()
+        rows = db.fetch_all(
+            "SELECT * FROM accounts "
+            "WHERE eab_credential_id = %s AND status = %s "
+            "ORDER BY created_at",
+            (eab_credential_id, AccountStatus.VALID.value),
+            as_dict=True,
+        )
+        return [self._row_to_entity(r) for r in rows]
 
     def revoke(self, account_id: UUID) -> Account | None:
         """Atomically transition an account from valid → revoked (RFC 8555 §7.1.2).

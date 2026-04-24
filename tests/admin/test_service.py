@@ -431,17 +431,46 @@ class StubAccountService:
 
     def __init__(self):
         self.calls: list[tuple[UUID, str]] = []
-        self.return_value: bool = True
+        # Account IDs whose revoke() should report CAS miss (i.e. not valid).
+        self.already_not_valid: set[UUID] = set()
 
     def revoke(self, account_id: UUID, *, reason: str = ""):
         self.calls.append((account_id, reason))
+        if account_id in self.already_not_valid:
+            return None
         # Caller only checks ``is not None``; a truthy sentinel is enough.
-        return object() if self.return_value else None
+        return object()
+
+
+class StubAccountRepo:
+    """Minimal AccountRepository stub — only the call paths exercised by
+    ``revoke_eab`` are implemented."""
+
+    def __init__(self):
+        # Registered accounts keyed by id. Each entry: (eab_credential_id, status).
+        self._accounts: dict[UUID, tuple[UUID | None, str]] = {}
+
+    def register(self, account_id: UUID, eab_credential_id: UUID | None, status: str = "valid"):
+        self._accounts[account_id] = (eab_credential_id, status)
+
+    def find_valid_by_eab_credential(self, eab_credential_id: UUID):
+        from types import SimpleNamespace
+
+        return [
+            SimpleNamespace(id=acc_id)
+            for acc_id, (eab_id, status) in self._accounts.items()
+            if eab_id == eab_credential_id and status == "valid"
+        ]
 
 
 @pytest.fixture()
 def account_service():
     return StubAccountService()
+
+
+@pytest.fixture()
+def account_repo():
+    return StubAccountRepo()
 
 
 @pytest.fixture()
@@ -451,6 +480,7 @@ def eab_service_with_accounts(
     settings,
     eab_repo,
     account_service,
+    account_repo,
 ):
     return AdminUserService(
         user_repo,
@@ -458,16 +488,8 @@ def eab_service_with_accounts(
         settings,
         eab_repo=eab_repo,
         account_service=account_service,
+        account_repo=account_repo,
     )
-
-
-def _bind_account(eab_repo, cred, account_id):
-    """Simulate the mark_used() side effect: bind ``account_id`` to ``cred``."""
-    from dataclasses import replace
-
-    bound = replace(cred, account_id=account_id, used=True)
-    eab_repo._creds[cred.id] = bound
-    return bound
 
 
 class TestRevokeEab:
@@ -488,79 +510,138 @@ class TestRevokeEab:
         assert len(rev_entries) == 1
         assert rev_entries[0].details["kid"] == "kid-rev-audit"
 
-    def test_revoke_unbound_eab_does_not_touch_account_service(
+    def test_revoke_eab_with_no_linked_accounts(
         self,
         eab_service_with_accounts,
-        eab_repo,
+        audit_repo,
         account_service,
     ):
         """Revoking an EAB that was never used must not invoke the cascade."""
-        cred = eab_service_with_accounts.create_eab("kid-unbound")
+        cred = eab_service_with_accounts.create_eab("kid-unlinked")
         eab_service_with_accounts.revoke_eab(cred.id, actor_id=uuid4())
+
         assert account_service.calls == []
+        rev_entries = [e for e in audit_repo.entries if e.action == "revoke_eab"]
+        assert rev_entries[0].details["linked_accounts"] == []
+        assert rev_entries[0].details["revoked_accounts"] == []
 
-    def test_revoke_bound_eab_cascades_to_account(
+    def test_revoke_eab_cascades_to_single_account(
         self,
         eab_service_with_accounts,
-        eab_repo,
         audit_repo,
         account_service,
+        account_repo,
     ):
-        """Revoking an EAB bound to an account must revoke that account."""
-        cred = eab_service_with_accounts.create_eab("kid-bound")
-        bound_account_id = uuid4()
-        _bind_account(eab_repo, cred, bound_account_id)
+        """Revoke path on a simple one-account EAB."""
+        cred = eab_service_with_accounts.create_eab("kid-single")
+        acc_id = uuid4()
+        account_repo.register(acc_id, cred.id)
 
         eab_service_with_accounts.revoke_eab(cred.id, actor_id=uuid4())
 
-        assert len(account_service.calls) == 1
-        cascaded_id, reason = account_service.calls[0]
-        assert cascaded_id == bound_account_id
-        assert reason == "eab_revoked:kid-bound"
+        assert account_service.calls == [(acc_id, "eab_revoked:kid-single")]
+        details = next(e.details for e in audit_repo.entries if e.action == "revoke_eab")
+        assert details["linked_accounts"] == [str(acc_id)]
+        assert details["revoked_accounts"] == [str(acc_id)]
 
-        rev_entries = [e for e in audit_repo.entries if e.action == "revoke_eab"]
-        assert rev_entries[0].details["bound_account_id"] == str(bound_account_id)
-        assert rev_entries[0].details["account_revoked"] is True
-
-    def test_revoke_bound_eab_when_account_already_not_valid(
+    def test_revoke_eab_cascades_to_all_reused_accounts(
         self,
         eab_service_with_accounts,
-        eab_repo,
         audit_repo,
         account_service,
+        account_repo,
     ):
-        """If the account is not in ``valid`` status, cascade is a no-op
-        and the audit entry records ``account_revoked=False``."""
-        cred = eab_service_with_accounts.create_eab("kid-already")
-        bound_account_id = uuid4()
-        _bind_account(eab_repo, cred, bound_account_id)
-        account_service.return_value = False  # simulate CAS miss
+        """With ``acme.eab_reusable=true`` an EAB can register many accounts
+        over time. Revoking it must cascade to every one of them — not just
+        the most recent binding, which is the only one the mutable
+        ``eab_credentials.account_id`` pointer tracks."""
+        cred = eab_service_with_accounts.create_eab("kid-reusable")
+        first = uuid4()
+        second = uuid4()
+        third = uuid4()
+        for acc_id in (first, second, third):
+            account_repo.register(acc_id, cred.id)
 
         eab_service_with_accounts.revoke_eab(cred.id, actor_id=uuid4())
 
-        assert account_service.calls == [(bound_account_id, "eab_revoked:kid-already")]
-        rev_entries = [e for e in audit_repo.entries if e.action == "revoke_eab"]
-        assert rev_entries[0].details["account_revoked"] is False
+        cascaded = {call[0] for call in account_service.calls}
+        assert cascaded == {first, second, third}
+        reasons = {call[1] for call in account_service.calls}
+        assert reasons == {"eab_revoked:kid-reusable"}
 
-    def test_revoke_bound_eab_without_account_service_logs_warning(
+        details = next(e.details for e in audit_repo.entries if e.action == "revoke_eab")
+        assert set(details["linked_accounts"]) == {str(first), str(second), str(third)}
+        assert set(details["revoked_accounts"]) == {str(first), str(second), str(third)}
+
+    def test_revoke_eab_skips_other_eabs(
         self,
-        eab_service,
-        eab_repo,
+        eab_service_with_accounts,
+        account_service,
+        account_repo,
+    ):
+        """Accounts registered with a *different* EAB must not be touched."""
+        target = eab_service_with_accounts.create_eab("kid-target")
+        other = eab_service_with_accounts.create_eab("kid-other")
+        target_acc = uuid4()
+        other_acc = uuid4()
+        account_repo.register(target_acc, target.id)
+        account_repo.register(other_acc, other.id)
+
+        eab_service_with_accounts.revoke_eab(target.id, actor_id=uuid4())
+
+        assert [call[0] for call in account_service.calls] == [target_acc]
+
+    def test_revoke_eab_records_only_successful_cascades(
+        self,
+        eab_service_with_accounts,
         audit_repo,
+        account_service,
+        account_repo,
+    ):
+        """CAS-miss accounts (already deactivated/revoked) still appear in
+        ``linked_accounts`` but not in ``revoked_accounts`` so an auditor
+        can tell which registrations transitioned on this admin action."""
+        cred = eab_service_with_accounts.create_eab("kid-mixed")
+        fresh = uuid4()
+        stale = uuid4()
+        account_repo.register(fresh, cred.id)
+        account_repo.register(stale, cred.id)
+        account_service.already_not_valid.add(stale)
+
+        eab_service_with_accounts.revoke_eab(cred.id, actor_id=uuid4())
+
+        details = next(e.details for e in audit_repo.entries if e.action == "revoke_eab")
+        assert set(details["linked_accounts"]) == {str(fresh), str(stale)}
+        assert details["revoked_accounts"] == [str(fresh)]
+
+    def test_revoke_eab_without_account_service_logs_warning(
+        self,
+        user_repo,
+        audit_repo,
+        settings,
+        eab_repo,
+        account_repo,
         caplog,
     ):
         """A deployment without AccountService wired in must not crash and
-        must surface a warning so the operator notices the stale account."""
+        must surface a warning so the operator notices the stale accounts."""
         import logging
 
-        cred = eab_service.create_eab("kid-no-service")
-        bound_account_id = uuid4()
-        _bind_account(eab_repo, cred, bound_account_id)
+        svc = AdminUserService(
+            user_repo,
+            audit_repo,
+            settings,
+            eab_repo=eab_repo,
+            account_repo=account_repo,
+        )
+        cred = svc.create_eab("kid-no-service")
+        acc_id = uuid4()
+        account_repo.register(acc_id, cred.id)
 
         with caplog.at_level(logging.WARNING, logger="acmeeh.admin.service"):
-            eab_service.revoke_eab(cred.id, actor_id=uuid4())
+            svc.revoke_eab(cred.id, actor_id=uuid4())
 
-        rev_entries = [e for e in audit_repo.entries if e.action == "revoke_eab"]
-        assert rev_entries[0].details["bound_account_id"] == str(bound_account_id)
-        assert rev_entries[0].details["account_revoked"] is False
-        assert any("AccountService is" in record.message for record in caplog.records)
+        details = next(e.details for e in audit_repo.entries if e.action == "revoke_eab")
+        assert details["linked_accounts"] == [str(acc_id)]
+        assert details["revoked_accounts"] == []
+        assert any("AccountService is unavailable" in record.message for record in caplog.records)

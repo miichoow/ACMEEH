@@ -24,6 +24,11 @@ class Account:
     tos_agreed: bool = False
     created_at: datetime = _EPOCH
     updated_at: datetime = _EPOCH
+    # Immutable link to the EAB credential used at registration time.
+    # Preserved even when the EAB is later re-bound to another account
+    # under ``acme.eab_reusable``; used by admin cascades such as EAB
+    # revocation.
+    eab_credential_id: UUID | None = None
 
 
 @dataclass(frozen=True)

@@ -607,28 +607,36 @@ class AdminUserService:
                 status=500,
             )
 
-        # Cascade: any ACME account bound to this EAB must lose its
-        # privileges (RFC 8555 §7.1.2 server-initiated ``revoked``
-        # status). Without this, an account registered against a
-        # compromised EAB would still be able to place orders.
-        bound_account_id = cred.account_id
+        # Cascade to *every* ACME account ever registered with this
+        # credential (RFC 8555 §7.1.2 server-initiated ``revoked``
+        # status). ``admin.eab_credentials.account_id`` is overwritten
+        # on each reuse under ``acme.eab_reusable`` and therefore only
+        # points at the latest registration, so we query accounts by
+        # the immutable ``accounts.eab_credential_id`` column instead.
         cascade_details: dict[str, Any] = {"kid": cred.kid}
-        if bound_account_id is not None:
-            cascade_details["bound_account_id"] = str(bound_account_id)
+        linked_accounts: list[UUID] = []
+        if self._accounts is not None:
+            linked_accounts = [
+                acc.id for acc in self._accounts.find_valid_by_eab_credential(cred_id)
+            ]
+
+        revoked_ids: list[str] = []
+        if linked_accounts:
             if self._account_service is not None:
-                revoked_account = self._account_service.revoke(
-                    bound_account_id,
-                    reason=f"eab_revoked:{cred.kid}",
-                )
-                cascade_details["account_revoked"] = revoked_account is not None
+                reason = f"eab_revoked:{cred.kid}"
+                for acc_id in linked_accounts:
+                    if self._account_service.revoke(acc_id, reason=reason) is not None:
+                        revoked_ids.append(str(acc_id))
             else:
                 log.warning(
-                    "EAB %s bound to account %s revoked but AccountService is "
-                    "unavailable; account status left unchanged",
+                    "EAB %s revoked with %d linked account(s) but "
+                    "AccountService is unavailable; account status left unchanged",
                     cred.kid,
-                    bound_account_id,
+                    len(linked_accounts),
                 )
-                cascade_details["account_revoked"] = False
+
+        cascade_details["linked_accounts"] = [str(a) for a in linked_accounts]
+        cascade_details["revoked_accounts"] = revoked_ids
 
         self._log_action(
             actor_id,

@@ -154,9 +154,12 @@ class AccountService:
                 "External account binding is required",
             )
 
-        eab_kid = None
+        eab_kid: str | None = None
+        eab_credential_id: UUID | None = None
         if eab_payload is not None and self._eab_repo is not None:
-            eab_kid = self._parse_and_verify_eab(eab_payload, jwk)
+            eab_cred = self._parse_and_verify_eab(eab_payload, jwk)
+            eab_kid = eab_cred.kid
+            eab_credential_id = eab_cred.id
         elif eab_payload is not None and self._eab_required:
             raise AcmeProblem(
                 EXTERNAL_ACCOUNT_REQUIRED,
@@ -181,7 +184,10 @@ class AccountService:
                 "At least one contact email is required",
             )
 
-        # Create account
+        # Create account. ``eab_credential_id`` is set immutably at
+        # registration time so EAB revocation can later cascade to every
+        # account ever registered with that credential (RFC 8555 §7.1.2),
+        # even when ``acme.eab_reusable`` has rebound the EAB since.
         account_id = uuid4()
         account = Account(
             id=account_id,
@@ -189,6 +195,7 @@ class AccountService:
             jwk=jwk,
             status=AccountStatus.VALID,
             tos_agreed=tos_agreed,
+            eab_credential_id=eab_credential_id,
         )
         self._accounts.create(account)
 
@@ -260,10 +267,11 @@ class AccountService:
         self,
         eab_payload: dict[str, Any],
         jwk: dict[str, Any],
-    ) -> str:
+    ) -> Any:  # noqa: ANN401
         """Parse the EAB protected header and verify the HMAC binding.
 
-        Returns the EAB kid on success.
+        Returns the verified :class:`EabCredential` on success so the
+        caller can record its ``id`` on the new account.
 
         Raises
         ------
@@ -315,7 +323,7 @@ class AccountService:
                 UNAUTHORIZED,
                 "EAB credential has already been used",
             )
-        return eab_kid
+        return cred
 
     @staticmethod
     def _extract_eab_kid(eab_payload: dict[str, Any]) -> str | None:

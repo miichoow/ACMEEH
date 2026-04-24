@@ -603,3 +603,49 @@ CREATE TABLE IF NOT EXISTS server_settings (
 INSERT INTO schema_migrations (version)
 VALUES ('009_server_settings')
 ON CONFLICT (version) DO NOTHING;
+
+-- =========================================================================
+-- Immutable registration-time EAB link on accounts.
+--
+-- ``admin.eab_credentials.account_id`` only tracks the *currently* bound
+-- account (overwritten on each reuse when ``acme.eab_reusable`` is true),
+-- so it cannot be used to discover every account that was registered via
+-- a given EAB. Admin operations such as EAB revocation need the full set
+-- to cascade a ``revoked`` status to every ACME account registered with
+-- that credential (RFC 8555 §7.1.2).
+--
+-- ``accounts.eab_credential_id`` is set once at registration and is never
+-- rewritten, so it preserves the history even as the EAB is rebound.
+-- ON DELETE SET NULL mirrors the existing FK on ``eab_credentials``.
+-- =========================================================================
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'accounts'
+          AND column_name = 'eab_credential_id'
+    ) THEN
+        ALTER TABLE accounts
+            ADD COLUMN eab_credential_id UUID
+                REFERENCES admin.eab_credentials(id) ON DELETE SET NULL;
+
+        -- Backfill from the "currently bound" pointer. For non-reusable
+        -- EABs this recovers the complete history; for reusable EABs
+        -- only the latest registration can be recovered — older rebinds
+        -- are lost and stay NULL.
+        UPDATE accounts a
+           SET eab_credential_id = e.id
+          FROM admin.eab_credentials e
+         WHERE e.account_id = a.id
+           AND a.eab_credential_id IS NULL;
+    END IF;
+END;
+$$;
+
+CREATE INDEX IF NOT EXISTS idx_accounts_eab_credential
+    ON accounts (eab_credential_id)
+    WHERE eab_credential_id IS NOT NULL;
+
+INSERT INTO schema_migrations (version)
+VALUES ('010_account_eab_link')
+ON CONFLICT (version) DO NOTHING;
