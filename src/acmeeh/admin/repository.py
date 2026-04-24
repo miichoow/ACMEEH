@@ -276,6 +276,52 @@ class EabCredentialRepository(BaseRepository[EabCredential]):
             (eab_id, identifier_id),
         )
 
+    def propagate_identifier_add(self, eab_id: UUID, identifier_id: UUID) -> None:
+        """Copy an identifier to the account currently bound to this EAB.
+
+        No-op when the EAB has no bound account. Mirrors the behaviour of
+        ``copy_to_account_by_kid`` so linkage edits made after registration
+        take effect without requiring the ACME client to re-register.
+        """
+        db = Database.get_instance()
+        db.execute(
+            "INSERT INTO admin.account_allowed_identifiers "
+            "(allowed_identifier_id, account_id) "
+            "SELECT %s, ec.account_id "
+            "FROM admin.eab_credentials ec "
+            "WHERE ec.id = %s AND ec.account_id IS NOT NULL "
+            "ON CONFLICT DO NOTHING",
+            (identifier_id, eab_id),
+        )
+
+    def propagate_identifier_remove(self, eab_id: UUID, identifier_id: UUID) -> None:
+        """Remove the identifier from the EAB's bound account when no longer granted.
+
+        Only deletes the ``account_allowed_identifiers`` row when no *other*
+        EAB bound to the same account still grants the identifier, so coverage
+        from additional EABs is preserved. Direct admin assignments made via
+        ``/allowed-identifiers/{id}/accounts`` share the same row and cannot be
+        distinguished from EAB-derived ones; removing the EAB link revokes them
+        too.
+        """
+        db = Database.get_instance()
+        db.execute(
+            "DELETE FROM admin.account_allowed_identifiers aai "
+            "USING admin.eab_credentials ec "
+            "WHERE aai.allowed_identifier_id = %s "
+            "  AND ec.id = %s "
+            "  AND ec.account_id = aai.account_id "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM admin.eab_allowed_identifiers eai2 "
+            "    JOIN admin.eab_credentials ec2 "
+            "      ON ec2.id = eai2.eab_credential_id "
+            "    WHERE eai2.allowed_identifier_id = aai.allowed_identifier_id "
+            "      AND ec2.account_id = aai.account_id "
+            "      AND ec2.id <> ec.id "
+            "  )",
+            (identifier_id, eab_id),
+        )
+
     def find_identifiers_for_eab(self, eab_id: UUID) -> list[AllowedIdentifier]:
         """Return all allowed identifiers linked to an EAB credential."""
         db = Database.get_instance()
@@ -327,6 +373,54 @@ class EabCredentialRepository(BaseRepository[EabCredential]):
             "DELETE FROM admin.eab_csr_profiles "
             "WHERE eab_credential_id = %s AND csr_profile_id = %s",
             (eab_id, profile_id),
+        )
+
+    def propagate_csr_profile_assign(
+        self,
+        eab_id: UUID,
+        profile_id: UUID,
+        assigned_by: UUID | None = None,
+    ) -> None:
+        """Upsert the CSR profile onto the account currently bound to this EAB.
+
+        No-op when the EAB has no bound account.
+        """
+        db = Database.get_instance()
+        db.execute(
+            "INSERT INTO admin.account_csr_profiles "
+            "(account_id, csr_profile_id, assigned_by) "
+            "SELECT ec.account_id, %s, %s "
+            "FROM admin.eab_credentials ec "
+            "WHERE ec.id = %s AND ec.account_id IS NOT NULL "
+            "ON CONFLICT (account_id) DO UPDATE "
+            "SET csr_profile_id = EXCLUDED.csr_profile_id, "
+            "    assigned_by = EXCLUDED.assigned_by",
+            (profile_id, assigned_by, eab_id),
+        )
+
+    def propagate_csr_profile_unassign(self, eab_id: UUID, profile_id: UUID) -> None:
+        """Remove the CSR profile from the EAB's bound account when no longer granted.
+
+        Only deletes the ``account_csr_profiles`` row when it matches the
+        removed profile *and* no other EAB bound to the same account still
+        assigns it.
+        """
+        db = Database.get_instance()
+        db.execute(
+            "DELETE FROM admin.account_csr_profiles acp "
+            "USING admin.eab_credentials ec "
+            "WHERE acp.csr_profile_id = %s "
+            "  AND ec.id = %s "
+            "  AND ec.account_id = acp.account_id "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM admin.eab_csr_profiles ecp2 "
+            "    JOIN admin.eab_credentials ec2 "
+            "      ON ec2.id = ecp2.eab_credential_id "
+            "    WHERE ecp2.csr_profile_id = acp.csr_profile_id "
+            "      AND ec2.account_id = acp.account_id "
+            "      AND ec2.id <> ec.id "
+            "  )",
+            (profile_id, eab_id),
         )
 
     def find_csr_profile_for_eab(self, eab_id: UUID) -> CsrProfile | None:

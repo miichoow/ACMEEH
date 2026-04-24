@@ -645,6 +645,18 @@ class AdminUserService:
             raise AcmeProblem(msg, "Allowed identifier not found", status=404)
 
         self._eab.add_identifier_association(eab_id, identifier_id)
+        # Propagate to the account currently bound to this EAB so the
+        # linkage takes effect without requiring the ACME client to
+        # re-register.
+        try:
+            self._eab.propagate_identifier_add(eab_id, identifier_id)
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "Failed to propagate EAB %s identifier %s to bound account",
+                eab_id,
+                identifier_id,
+                exc_info=True,
+            )
 
         self._log_action(
             actor_id,
@@ -677,6 +689,15 @@ class AdminUserService:
             raise AcmeProblem(msg, "EAB credential not found", status=404)
 
         self._eab.remove_identifier_association(eab_id, identifier_id)
+        try:
+            self._eab.propagate_identifier_remove(eab_id, identifier_id)
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "Failed to propagate EAB %s identifier %s removal to bound account",
+                eab_id,
+                identifier_id,
+                exc_info=True,
+            )
 
         self._log_action(
             actor_id,
@@ -735,6 +756,15 @@ class AdminUserService:
             raise AcmeProblem(msg, "CSR profile not found", status=404)
 
         self._eab.assign_csr_profile(eab_id, profile_id, actor_id)
+        try:
+            self._eab.propagate_csr_profile_assign(eab_id, profile_id, actor_id)
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "Failed to propagate EAB %s CSR profile %s to bound account",
+                eab_id,
+                profile_id,
+                exc_info=True,
+            )
 
         self._log_action(
             actor_id,
@@ -776,6 +806,15 @@ class AdminUserService:
             raise AcmeProblem(msg, "CSR profile not found", status=404)
 
         self._eab.unassign_csr_profile(eab_id, profile_id)
+        try:
+            self._eab.propagate_csr_profile_unassign(eab_id, profile_id)
+        except Exception:  # noqa: BLE001
+            log.warning(
+                "Failed to propagate EAB %s CSR profile %s removal to bound account",
+                eab_id,
+                profile_id,
+                exc_info=True,
+            )
 
         self._log_action(
             actor_id,
