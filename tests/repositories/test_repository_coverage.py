@@ -1326,8 +1326,7 @@ class TestAccountRepository:
         repo = self._make_repo(db)
         repo.search({"eab_only": True})
         query = db.fetch_all.call_args[0][0]
-        assert "admin.eab_credentials" in query
-        assert "account_id IS NOT NULL" in query
+        assert "eab_credential_id IS NOT NULL" in query
 
     @patch("acmeeh.repositories.account.Database")
     def test_search_eab_kid_filter(self, MockDB):
@@ -1394,6 +1393,7 @@ class TestAccountRepository:
         assert result == {id1: "kid-1", id2: "kid-2"}
         query, params = db.fetch_all.call_args[0][:2]
         assert "admin.eab_credentials" in query
+        assert "a.eab_credential_id" in query
         assert "%s, %s" in query
         assert params == (id1, id2)
 

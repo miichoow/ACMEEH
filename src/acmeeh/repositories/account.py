@@ -98,16 +98,18 @@ class AccountRepository(BaseRepository[Account]):
             params.append(filters["status"])
 
         if filters.get("eab_only") or "eab_kid" in filters:
-            sub_conditions = ["account_id IS NOT NULL"]
-            sub_params: list = []
+            # Filter on the immutable ``accounts.eab_credential_id`` column so
+            # accounts rebound away from a reusable EAB still match. The
+            # mutable ``admin.eab_credentials.account_id`` back-pointer only
+            # tracks the most recent registration and would drop older ones.
             if "eab_kid" in filters:
-                sub_conditions.append("kid = %s")
-                sub_params.append(filters["eab_kid"])
-            sub_where = " AND ".join(sub_conditions)
-            conditions.append(
-                f"id IN (SELECT account_id FROM admin.eab_credentials WHERE {sub_where})",
-            )
-            params.extend(sub_params)
+                conditions.append(
+                    "eab_credential_id IN "
+                    "(SELECT id FROM admin.eab_credentials WHERE kid = %s)",
+                )
+                params.append(filters["eab_kid"])
+            else:
+                conditions.append("eab_credential_id IS NOT NULL")
 
         if "contact" in filters:
             conditions.append(
@@ -135,14 +137,23 @@ class AccountRepository(BaseRepository[Account]):
         self,
         account_ids: list[UUID],
     ) -> dict[UUID, str]:
-        """Return a mapping of account_id -> EAB kid for bound accounts."""
+        """Return a mapping of account_id -> EAB kid for bound accounts.
+
+        Joins via the immutable ``accounts.eab_credential_id`` column so
+        every historical registration keeps its kid in admin listings,
+        even after a reusable EAB has been rebound to another account
+        (which overwrites the mutable ``admin.eab_credentials.account_id``
+        back-pointer).
+        """
         if not account_ids:
             return {}
         db = Database.get_instance()
         placeholders = ", ".join(["%s"] * len(account_ids))
         rows = db.fetch_all(
-            f"SELECT account_id, kid FROM admin.eab_credentials "  # noqa: S608
-            f"WHERE account_id IN ({placeholders})",
+            f"SELECT a.id AS account_id, e.kid "  # noqa: S608
+            f"FROM accounts a "
+            f"JOIN admin.eab_credentials e ON e.id = a.eab_credential_id "
+            f"WHERE a.id IN ({placeholders})",
             tuple(account_ids),
             as_dict=True,
         )
