@@ -272,6 +272,122 @@ class TestListAccounts:
         )
         assert resp.status_code == 400
 
+    def test_invalid_created_after_returns_400(self, client, admin_service):
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        resp = client.get(
+            "/api/accounts?created_after=not-a-date",
+            headers=_auth_header(admin),
+        )
+        assert resp.status_code == 400
+
+    def test_filter_contact_substring(self, client, admin_service):
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        admin_service.add_account(contacts=["mailto:alice@example.com"])
+        admin_service.add_account(contacts=["mailto:bob@other.org"])
+
+        resp = client.get(
+            "/api/accounts?contact=example.com",
+            headers=_auth_header(admin),
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert len(data) == 1
+
+    def test_filter_created_before_passed_through(
+        self,
+        client,
+        admin_service,
+        monkeypatch,
+    ):
+        """Valid ISO datetime is parsed and forwarded to the service as a datetime."""
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        admin_service.add_account()
+
+        seen: dict = {}
+        original = admin_service.list_accounts
+
+        def spy(filters, limit=50, offset=0):
+            seen["filters"] = filters
+            return original(filters, limit, offset)
+
+        monkeypatch.setattr(admin_service, "list_accounts", spy)
+
+        resp = client.get(
+            "/api/accounts?created_before=2026-06-01T00:00:00%2B00:00"
+            "&created_after=2026-01-01T00:00:00%2B00:00",
+            headers=_auth_header(admin),
+        )
+        assert resp.status_code == 200
+        assert isinstance(seen["filters"]["created_before"], datetime)
+        assert isinstance(seen["filters"]["created_after"], datetime)
+
+    def test_pagination_link_header_when_has_next(
+        self,
+        client,
+        admin_service,
+    ):
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        for _ in range(3):
+            admin_service.add_account()
+
+        resp = client.get("/api/accounts?limit=2", headers=_auth_header(admin))
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert len(data) == 2
+        assert "Link" in resp.headers
+        assert 'rel="next"' in resp.headers["Link"]
+
+    def test_no_link_header_when_single_page(self, client, admin_service):
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        admin_service.add_account()
+
+        resp = client.get("/api/accounts?limit=50", headers=_auth_header(admin))
+        assert resp.status_code == 200
+        assert "Link" not in resp.headers
+
+    def test_offset_skips_earlier_accounts(self, client, admin_service):
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        for _ in range(3):
+            admin_service.add_account()
+
+        resp = client.get(
+            "/api/accounts?limit=1&offset=1",
+            headers=_auth_header(admin),
+        )
+        assert resp.status_code == 200
+        assert len(resp.get_json()) == 1
+
+    def test_invalid_limit_returns_400(self, client, admin_service):
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        resp = client.get("/api/accounts?limit=0", headers=_auth_header(admin))
+        assert resp.status_code == 400
+
+    def test_negative_offset_returns_400(self, client, admin_service):
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        resp = client.get("/api/accounts?offset=-1", headers=_auth_header(admin))
+        assert resp.status_code == 400
+
+    def test_non_integer_limit_returns_400(self, client, admin_service):
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        resp = client.get("/api/accounts?limit=abc", headers=_auth_header(admin))
+        assert resp.status_code == 400
+
+    def test_combined_filters(self, client, admin_service):
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        admin_service.add_account(status=AccountStatus.VALID, eab_kid="kid-X")
+        admin_service.add_account(status=AccountStatus.VALID)
+        admin_service.add_account(status=AccountStatus.DEACTIVATED, eab_kid="kid-Y")
+
+        resp = client.get(
+            "/api/accounts?status=valid&eab_only=true",
+            headers=_auth_header(admin),
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert len(data) == 1
+        assert data[0]["eab_kid"] == "kid-X"
+        assert data[0]["status"] == "valid"
+
     def test_no_auth_returns_401(self, client):
         resp = client.get("/api/accounts")
         assert resp.status_code == 401
@@ -325,6 +441,40 @@ class TestGetAccount:
         admin = admin_service.add_user(role=AdminRole.ADMIN)
         resp = client.get(
             f"/api/accounts/{uuid4()}",
+            headers=_auth_header(admin),
+        )
+        assert resp.status_code == 404
+
+    def test_minimal_account_without_eab_contacts_or_profile(
+        self,
+        client,
+        admin_service,
+    ):
+        """An account with no EAB, contacts, or CSR profile omits those fields cleanly."""
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        acc = admin_service.add_account()
+
+        resp = client.get(
+            f"/api/accounts/{acc.id}",
+            headers=_auth_header(admin),
+        )
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["id"] == str(acc.id)
+        assert data["eab_kid"] is None
+        assert data["contacts"] == []
+        assert "csr_profile_id" not in data
+
+    def test_no_auth_returns_401(self, client, admin_service):
+        acc = admin_service.add_account()
+        resp = client.get(f"/api/accounts/{acc.id}")
+        assert resp.status_code == 401
+
+    def test_invalid_uuid_returns_404(self, client, admin_service):
+        """Flask's <uuid:> converter rejects non-UUID paths with a 404."""
+        admin = admin_service.add_user(role=AdminRole.ADMIN)
+        resp = client.get(
+            "/api/accounts/not-a-uuid",
             headers=_auth_header(admin),
         )
         assert resp.status_code == 404

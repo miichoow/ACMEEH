@@ -288,3 +288,132 @@ class TestSendPasswordEmail:
         notification_service.notify.side_effect = Exception("unexpected")
         # Must not raise
         full_service._send_password_email(notif_type, mock_user, "pwd")
+
+
+# ---------------------------------------------------------------------------
+# ACME account inspection (list_accounts / get_account)
+# ---------------------------------------------------------------------------
+
+
+class TestListAccountsService:
+    def test_returns_empty_when_account_repo_missing(self, service):
+        accounts, eab_kids = service.list_accounts({})
+        assert accounts == []
+        assert eab_kids == {}
+
+    def test_delegates_to_repos_and_merges_eab_kids(self, user_repo, audit_repo, settings):
+        from uuid import uuid4
+
+        account_repo = MagicMock()
+        acct1 = MagicMock(id=uuid4())
+        acct2 = MagicMock(id=uuid4())
+        account_repo.search.return_value = [acct1, acct2]
+        account_repo.find_eab_kids_for_accounts.return_value = {acct1.id: "kid-1"}
+
+        svc = AdminUserService(
+            user_repo=user_repo,
+            audit_repo=audit_repo,
+            settings=settings,
+            account_repo=account_repo,
+        )
+
+        filters = {"status": "valid"}
+        accounts, eab_kids = svc.list_accounts(filters, limit=10, offset=0)
+
+        account_repo.search.assert_called_once_with(filters, 10, 0)
+        account_repo.find_eab_kids_for_accounts.assert_called_once_with(
+            [acct1.id, acct2.id],
+        )
+        assert accounts == [acct1, acct2]
+        assert eab_kids == {acct1.id: "kid-1"}
+
+
+class TestGetAccountService:
+    def test_raises_503_when_account_repo_missing(self, service):
+        from uuid import uuid4
+
+        with pytest.raises(AcmeProblem) as exc:
+            service.get_account(uuid4())
+        assert exc.value.status == 503
+
+    def test_raises_404_when_account_not_found(self, user_repo, audit_repo, settings):
+        from uuid import uuid4
+
+        account_repo = MagicMock()
+        account_repo.find_by_id.return_value = None
+        svc = AdminUserService(
+            user_repo=user_repo,
+            audit_repo=audit_repo,
+            settings=settings,
+            account_repo=account_repo,
+        )
+        with pytest.raises(AcmeProblem) as exc:
+            svc.get_account(uuid4())
+        assert exc.value.status == 404
+
+    def test_returns_account_with_contacts_eab_and_profile(
+        self,
+        user_repo,
+        audit_repo,
+        settings,
+    ):
+        from uuid import uuid4
+
+        acct_id = uuid4()
+        profile_id = uuid4()
+        account = MagicMock(id=acct_id)
+        contact = MagicMock(contact_uri="mailto:ops@example.com")
+        profile = MagicMock(id=profile_id)
+
+        account_repo = MagicMock()
+        account_repo.find_by_id.return_value = account
+        account_repo.find_eab_kids_for_accounts.return_value = {acct_id: "kid-abc"}
+        contact_repo = MagicMock()
+        contact_repo.find_by_account.return_value = [contact]
+        csr_profile_repo = MagicMock()
+        csr_profile_repo.find_profile_for_account.return_value = profile
+
+        svc = AdminUserService(
+            user_repo=user_repo,
+            audit_repo=audit_repo,
+            settings=settings,
+            csr_profile_repo=csr_profile_repo,
+            account_repo=account_repo,
+            account_contact_repo=contact_repo,
+        )
+
+        result_account, contacts, eab_kid, profile_id_out = svc.get_account(acct_id)
+        assert result_account is account
+        assert contacts == [contact]
+        assert eab_kid == "kid-abc"
+        assert profile_id_out == profile_id
+
+    def test_unbound_account_returns_none_for_eab_and_profile(
+        self,
+        user_repo,
+        audit_repo,
+        settings,
+    ):
+        from uuid import uuid4
+
+        acct_id = uuid4()
+        account = MagicMock(id=acct_id)
+
+        account_repo = MagicMock()
+        account_repo.find_by_id.return_value = account
+        account_repo.find_eab_kids_for_accounts.return_value = {}
+        csr_profile_repo = MagicMock()
+        csr_profile_repo.find_profile_for_account.return_value = None
+
+        svc = AdminUserService(
+            user_repo=user_repo,
+            audit_repo=audit_repo,
+            settings=settings,
+            csr_profile_repo=csr_profile_repo,
+            account_repo=account_repo,
+        )
+
+        _account, contacts, eab_kid, profile_id = svc.get_account(acct_id)
+        assert contacts == []
+        assert eab_kid is None
+        assert profile_id is None

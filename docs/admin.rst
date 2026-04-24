@@ -143,7 +143,8 @@ The Admin API uses role-based access control. Each endpoint requires one or more
        maintenance mode, audit log export
    * - ``auditor``
      - Read-only access: list and view users, view audit logs, list and view certificates,
-       list and view CSR profiles, view current user profile
+       list and view CSR profiles, list and view ACME accounts (with redacted JWK),
+       view current user profile
 
 
 Pagination
@@ -1416,6 +1417,134 @@ Code Signing
      "common_name_maximum": 1,
      "reuse_key": false
    }
+
+
+ACME Accounts
+-------------
+
+Inspect ACME accounts registered against the server. These endpoints are read-only;
+ACME clients create and deactivate accounts through the RFC 8555 ``/new-account`` and
+account update flows (:doc:`api-reference`). Both endpoints are available to ``admin``
+and ``auditor`` roles; the ``auditor`` view omits the full JWK and exposes only the
+JWK thumbprint.
+
+**GET** ``/api/accounts``
+
+List ACME accounts with filtering and offset-based pagination.
+*admin, auditor*
+
+**Query parameters:**
+
+.. list-table::
+   :header-rows: 1
+
+   * - Parameter
+     - Type
+     - Description
+   * - ``status``
+     - string
+     - Filter by account status. One of ``valid``, ``deactivated``, ``revoked``.
+   * - ``eab_only``
+     - boolean
+     - When ``true``, return only accounts registered via External Account Binding.
+       Accepts ``true``/``false``/``1``/``0``.
+   * - ``eab_kid``
+     - string
+     - Return only the account bound to this EAB ``kid``. Implies ``eab_only=true``.
+   * - ``contact``
+     - string
+     - Case-insensitive substring match against registered contact URIs
+       (e.g. ``example.com`` matches ``mailto:ops@example.com``).
+   * - ``created_before``
+     - ISO 8601
+     - Only accounts created strictly before this timestamp.
+   * - ``created_after``
+     - ISO 8601
+     - Only accounts created strictly after this timestamp.
+   * - ``limit``
+     - integer
+     - Maximum results to return (default: ``admin_api.default_page_size``, typically 50).
+   * - ``offset``
+     - integer
+     - Offset for pagination (default: 0).
+
+**Response 200 (admin role):**
+
+.. code-block:: json
+
+   [
+     {
+       "id": "dd0e8400-e29b-41d4-a716-446655440030",
+       "jwk_thumbprint": "x8F2...sha256-b64url",
+       "jwk": {
+         "kty": "EC",
+         "crv": "P-256",
+         "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+         "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+       },
+       "status": "valid",
+       "tos_agreed": true,
+       "eab_kid": "kid-team-a",
+       "created_at": "2026-01-05T09:12:00+00:00",
+       "updated_at": "2026-01-05T09:12:00+00:00"
+     }
+   ]
+
+**Response 200 (auditor role):** same shape as above, but the ``jwk`` field is omitted;
+only ``jwk_thumbprint`` is exposed.
+
+**Pagination:** Offset-based with a ``Link`` header when more results are available:
+
+.. code-block:: text
+
+   Link: </api/accounts?limit=50&offset=50>; rel="next"
+
+**Errors:**
+
+* **400** — invalid ``status``, ``eab_only``, ``created_before``, ``created_after``,
+  ``limit``, or ``offset``.
+* **401** — missing or invalid bearer token.
+* **403** — caller lacks the ``admin`` or ``auditor`` role.
+
+**GET** ``/api/accounts/{account_id}``
+
+Get a single ACME account with its registered contacts, bound EAB ``kid`` (if any),
+and assigned CSR profile (if any). *admin, auditor*
+
+**Response 200 (admin role):**
+
+.. code-block:: json
+
+   {
+     "id": "dd0e8400-e29b-41d4-a716-446655440030",
+     "jwk_thumbprint": "x8F2...sha256-b64url",
+     "jwk": {
+       "kty": "EC",
+       "crv": "P-256",
+       "x": "f83OJ3D2xF1Bg8vub9tLe1gHMzV76e8Tus9uPHvRVEU",
+       "y": "x_FEzRu9m36HLN_tue659LNpXW6pCyStikYjKIWI5a0"
+     },
+     "status": "valid",
+     "tos_agreed": true,
+     "eab_kid": "kid-team-a",
+     "created_at": "2026-01-05T09:12:00+00:00",
+     "updated_at": "2026-01-05T09:12:00+00:00",
+     "contacts": ["mailto:ops@example.com"],
+     "csr_profile_id": "aa0e8400-e29b-41d4-a716-446655440090"
+   }
+
+The ``contacts`` array is always present (empty when no contacts are registered).
+``csr_profile_id`` is only present when a CSR profile has been assigned to the account
+(see :ref:`csr-profile-enforcement`). ``eab_kid`` is ``null`` when the account was not
+registered via External Account Binding.
+
+**Response 200 (auditor role):** same shape, but the ``jwk`` field is omitted.
+
+**Errors:**
+
+* **401** — missing or invalid bearer token.
+* **403** — caller lacks the ``admin`` or ``auditor`` role.
+* **404** — no ACME account with that ID.
 
 
 Certificates

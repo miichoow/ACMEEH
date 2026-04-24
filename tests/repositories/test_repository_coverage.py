@@ -1295,6 +1295,108 @@ class TestAccountRepository:
         result = repo.deactivate(_uuid())
         assert result is None
 
+    @patch("acmeeh.repositories.account.Database")
+    def test_search_no_filters(self, MockDB):
+        db = MockDB.get_instance.return_value
+        db.fetch_all.return_value = [_account_row(), _account_row()]
+        repo = self._make_repo(db)
+        result = repo.search({})
+        assert len(result) == 2
+        query = db.fetch_all.call_args[0][0]
+        assert "WHERE TRUE" in query
+        assert "ORDER BY created_at DESC" in query
+        # limit + offset must be the final two positional args.
+        params = db.fetch_all.call_args[0][1]
+        assert params == (50, 0)
+
+    @patch("acmeeh.repositories.account.Database")
+    def test_search_status_filter(self, MockDB):
+        db = MockDB.get_instance.return_value
+        db.fetch_all.return_value = []
+        repo = self._make_repo(db)
+        repo.search({"status": "valid"})
+        query, params = db.fetch_all.call_args[0][:2]
+        assert "status = %s" in query
+        assert "valid" in params
+
+    @patch("acmeeh.repositories.account.Database")
+    def test_search_eab_only_subquery(self, MockDB):
+        db = MockDB.get_instance.return_value
+        db.fetch_all.return_value = []
+        repo = self._make_repo(db)
+        repo.search({"eab_only": True})
+        query = db.fetch_all.call_args[0][0]
+        assert "admin.eab_credentials" in query
+        assert "account_id IS NOT NULL" in query
+
+    @patch("acmeeh.repositories.account.Database")
+    def test_search_eab_kid_filter(self, MockDB):
+        db = MockDB.get_instance.return_value
+        db.fetch_all.return_value = []
+        repo = self._make_repo(db)
+        repo.search({"eab_kid": "kid-abc"})
+        query, params = db.fetch_all.call_args[0][:2]
+        assert "kid = %s" in query
+        assert "kid-abc" in params
+
+    @patch("acmeeh.repositories.account.Database")
+    def test_search_contact_substring(self, MockDB):
+        db = MockDB.get_instance.return_value
+        db.fetch_all.return_value = []
+        repo = self._make_repo(db)
+        repo.search({"contact": "example.com"})
+        query, params = db.fetch_all.call_args[0][:2]
+        assert "account_contacts" in query
+        assert "ILIKE" in query
+        assert "%example.com%" in params
+
+    @patch("acmeeh.repositories.account.Database")
+    def test_search_created_before_and_after(self, MockDB):
+        db = MockDB.get_instance.return_value
+        db.fetch_all.return_value = []
+        repo = self._make_repo(db)
+        before = datetime(2026, 6, 1, tzinfo=UTC)
+        after = datetime(2026, 1, 1, tzinfo=UTC)
+        repo.search({"created_before": before, "created_after": after})
+        query, params = db.fetch_all.call_args[0][:2]
+        assert "created_at < %s" in query
+        assert "created_at > %s" in query
+        assert before in params
+        assert after in params
+
+    @patch("acmeeh.repositories.account.Database")
+    def test_search_pagination_params(self, MockDB):
+        db = MockDB.get_instance.return_value
+        db.fetch_all.return_value = []
+        repo = self._make_repo(db)
+        repo.search({}, limit=10, offset=20)
+        params = db.fetch_all.call_args[0][1]
+        assert params[-2:] == (10, 20)
+
+    @patch("acmeeh.repositories.account.Database")
+    def test_find_eab_kids_empty_input(self, MockDB):
+        db = MockDB.get_instance.return_value
+        repo = self._make_repo(db)
+        result = repo.find_eab_kids_for_accounts([])
+        assert result == {}
+        db.fetch_all.assert_not_called()
+
+    @patch("acmeeh.repositories.account.Database")
+    def test_find_eab_kids_returns_mapping(self, MockDB):
+        db = MockDB.get_instance.return_value
+        id1, id2 = _uuid(), _uuid()
+        db.fetch_all.return_value = [
+            {"account_id": id1, "kid": "kid-1"},
+            {"account_id": id2, "kid": "kid-2"},
+        ]
+        repo = self._make_repo(db)
+        result = repo.find_eab_kids_for_accounts([id1, id2])
+        assert result == {id1: "kid-1", id2: "kid-2"}
+        query, params = db.fetch_all.call_args[0][:2]
+        assert "admin.eab_credentials" in query
+        assert "%s, %s" in query
+        assert params == (id1, id2)
+
 
 class TestAccountContactRepository:
     def _make_repo(self, mock_db):
