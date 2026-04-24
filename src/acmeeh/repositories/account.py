@@ -104,8 +104,7 @@ class AccountRepository(BaseRepository[Account]):
             # tracks the most recent registration and would drop older ones.
             if "eab_kid" in filters:
                 conditions.append(
-                    "eab_credential_id IN "
-                    "(SELECT id FROM admin.eab_credentials WHERE kid = %s)",
+                    "eab_credential_id IN (SELECT id FROM admin.eab_credentials WHERE kid = %s)",
                 )
                 params.append(filters["eab_kid"])
             else:
