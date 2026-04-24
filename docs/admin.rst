@@ -579,7 +579,12 @@ Get a specific EAB credential. The ``hmac_key`` is never included in this respon
 **POST** ``/api/eab/{cred_id}/revoke``
 
 Revoke an EAB credential so it can no longer be used for account registration.
-Already-bound accounts are not affected. *admin*
+If the credential is bound to an ACME account, that account is cascaded to
+``revoked`` status (RFC 8555 §7.1.2) and its pending/valid authorizations
+are deactivated — the client cannot place further orders. The cascade is a
+no-op when the bound account is already ``deactivated`` or ``revoked``, and
+the outcome is recorded in the audit log entry under
+``details.bound_account_id`` and ``details.account_revoked``. *admin*
 
 **Response 200:**
 

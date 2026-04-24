@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h2>Account Revoked</h2>
+<p>Your ACME account has been revoked by the server. No further orders can be placed with this account and it cannot be reactivated.</p>
+<table>
+  <tr><td><strong>Account ID</strong></td><td>{{ account_id }}</td></tr>
+  <tr><td><strong>Reason</strong></td><td>{{ reason }}</td></tr>
+  <tr><td><strong>Deactivated Authorizations</strong></td><td>{{ deactivated_authorizations }}</td></tr>
+</table>
+<p><small>Reported by {{ server_url }} at {{ timestamp }}</small></p>
+</body>
+</html>

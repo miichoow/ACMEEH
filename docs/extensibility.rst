@@ -905,6 +905,7 @@ Available notification types:
 - ``challenge_failed`` --- Challenge validation failed
 - ``csr_validation_failed`` --- CSR validation failed against profile
 - ``account_deactivated`` --- Account deactivated by holder
+- ``account_revoked`` --- Account revoked by the server (e.g. bound EAB revoked)
 - ``key_rollover_succeeded`` --- Account key rollover succeeded
 - ``authorization_deactivated`` --- Authorization deactivated
 

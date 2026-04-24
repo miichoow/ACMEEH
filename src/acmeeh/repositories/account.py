@@ -165,6 +165,27 @@ class AccountRepository(BaseRepository[Account]):
             )
         return self._row_to_entity(row) if row else None
 
+    def revoke(self, account_id: UUID) -> Account | None:
+        """Atomically transition an account from valid → revoked (RFC 8555 §7.1.2).
+
+        Returns the updated account, or None if the account was not
+        in 'valid' status (CAS guard). Revocation is server-initiated
+        (for example, cascading from a revoked EAB credential) and
+        cannot be undone.
+        """
+        db = Database.get_instance()
+        row = db.fetch_one(
+            "UPDATE accounts SET status = %s WHERE id = %s AND status = %s RETURNING *",
+            (AccountStatus.REVOKED.value, account_id, AccountStatus.VALID.value),
+            as_dict=True,
+        )
+        if row is None:
+            log.debug(
+                "CAS guard failed: account %s not in valid status for revocation",
+                account_id,
+            )
+        return self._row_to_entity(row) if row else None
+
 
 class AccountContactRepository(BaseRepository[AccountContact]):
     table_name = "account_contacts"

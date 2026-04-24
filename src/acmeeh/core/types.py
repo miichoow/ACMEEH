@@ -101,6 +101,7 @@ class NotificationType(StrEnum):
     CSR_VALIDATION_FAILED = "csr_validation_failed"
     ORDER_STALE_RECOVERED = "order_stale_recovered"
     ACCOUNT_DEACTIVATED = "account_deactivated"
+    ACCOUNT_REVOKED = "account_revoked"
     KEY_ROLLOVER_SUCCEEDED = "key_rollover_succeeded"
     ORDER_QUOTA_EXCEEDED = "order_quota_exceeded"
     AUTHORIZATION_DEACTIVATED = "authorization_deactivated"

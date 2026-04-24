@@ -205,9 +205,11 @@ class Container:
             self.nonces,
             settings.nonce,
         )
-        # Admin API (optional -- guarded by config).  Must be
-        # created before AccountService and OrderService so the
-        # EAB and allowlist repos are available.
+        # Admin API repos (optional -- guarded by config). Created up
+        # front so the EAB and allowlist repos are available to
+        # AccountService and OrderService. The AdminUserService itself
+        # is constructed below, after AccountService, so it can cascade
+        # revocations to bound ACME accounts.
         self.admin_user_repo: AdminUserRepository | None = None
         self.admin_audit_repo: AuditLogRepository | None = None
         self.admin_eab_repo: EabCredentialRepository | None = None
@@ -232,7 +234,6 @@ class Container:
             from acmeeh.admin.repository import (  # noqa: PLC0415
                 EabCredentialRepository as _EAB,  # noqa: N814
             )
-            from acmeeh.admin.service import AdminUserService as _AUS  # noqa: E501, N814, PLC0415
 
             # Wire DB into token blacklist for HA-safe revocation
             get_token_blacklist().set_db(db)
@@ -242,19 +243,6 @@ class Container:
             self.admin_eab_repo = _EAB(db)
             self.admin_allowlist_repo = _AIR(db)
             self.admin_csr_profile_repo = _CPR(db)
-            self.admin_service = _AUS(
-                self.admin_user_repo,
-                self.admin_audit_repo,
-                settings.admin_api,
-                self.notification_service,
-                eab_repo=self.admin_eab_repo,
-                allowlist_repo=self.admin_allowlist_repo,
-                csr_profile_repo=(self.admin_csr_profile_repo),
-                notification_repo=self.notification_repo,
-                cert_repo=self.certificates,
-                account_repo=self.accounts,
-                account_contact_repo=self.account_contacts,
-            )
 
         self.account_service: AccountService = _AccS(
             self.accounts,
@@ -269,6 +257,29 @@ class Container:
             authz_repo=self.authorizations,
             account_settings=settings.account,
         )
+
+        if settings.admin_api.enabled:
+            from acmeeh.admin.service import AdminUserService as _AUS  # noqa: E501, N814, PLC0415
+
+            # Narrow Optional for mypy: these were assigned in the
+            # identical ``if settings.admin_api.enabled`` block above.
+            assert self.admin_user_repo is not None  # noqa: S101
+            assert self.admin_audit_repo is not None  # noqa: S101
+
+            self.admin_service = _AUS(
+                self.admin_user_repo,
+                self.admin_audit_repo,
+                settings.admin_api,
+                self.notification_service,
+                eab_repo=self.admin_eab_repo,
+                allowlist_repo=self.admin_allowlist_repo,
+                csr_profile_repo=(self.admin_csr_profile_repo),
+                notification_repo=self.notification_repo,
+                cert_repo=self.certificates,
+                account_repo=self.accounts,
+                account_contact_repo=self.account_contacts,
+                account_service=self.account_service,
+            )
         self.order_service: OrderService = _OS(
             self.orders,
             self.authorizations,

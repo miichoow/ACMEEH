@@ -426,6 +426,50 @@ class TestGetEab:
         assert "404" in str(exc_info.value.status)
 
 
+class StubAccountService:
+    """In-memory stub for AccountService used to observe revoke() calls."""
+
+    def __init__(self):
+        self.calls: list[tuple[UUID, str]] = []
+        self.return_value: bool = True
+
+    def revoke(self, account_id: UUID, *, reason: str = ""):
+        self.calls.append((account_id, reason))
+        # Caller only checks ``is not None``; a truthy sentinel is enough.
+        return object() if self.return_value else None
+
+
+@pytest.fixture()
+def account_service():
+    return StubAccountService()
+
+
+@pytest.fixture()
+def eab_service_with_accounts(
+    user_repo,
+    audit_repo,
+    settings,
+    eab_repo,
+    account_service,
+):
+    return AdminUserService(
+        user_repo,
+        audit_repo,
+        settings,
+        eab_repo=eab_repo,
+        account_service=account_service,
+    )
+
+
+def _bind_account(eab_repo, cred, account_id):
+    """Simulate the mark_used() side effect: bind ``account_id`` to ``cred``."""
+    from dataclasses import replace
+
+    bound = replace(cred, account_id=account_id, used=True)
+    eab_repo._creds[cred.id] = bound
+    return bound
+
+
 class TestRevokeEab:
     def test_revoke_credential(self, eab_service):
         cred = eab_service.create_eab("kid-revoke")
@@ -443,3 +487,80 @@ class TestRevokeEab:
         rev_entries = [e for e in audit_repo.entries if e.action == "revoke_eab"]
         assert len(rev_entries) == 1
         assert rev_entries[0].details["kid"] == "kid-rev-audit"
+
+    def test_revoke_unbound_eab_does_not_touch_account_service(
+        self,
+        eab_service_with_accounts,
+        eab_repo,
+        account_service,
+    ):
+        """Revoking an EAB that was never used must not invoke the cascade."""
+        cred = eab_service_with_accounts.create_eab("kid-unbound")
+        eab_service_with_accounts.revoke_eab(cred.id, actor_id=uuid4())
+        assert account_service.calls == []
+
+    def test_revoke_bound_eab_cascades_to_account(
+        self,
+        eab_service_with_accounts,
+        eab_repo,
+        audit_repo,
+        account_service,
+    ):
+        """Revoking an EAB bound to an account must revoke that account."""
+        cred = eab_service_with_accounts.create_eab("kid-bound")
+        bound_account_id = uuid4()
+        _bind_account(eab_repo, cred, bound_account_id)
+
+        eab_service_with_accounts.revoke_eab(cred.id, actor_id=uuid4())
+
+        assert len(account_service.calls) == 1
+        cascaded_id, reason = account_service.calls[0]
+        assert cascaded_id == bound_account_id
+        assert reason == "eab_revoked:kid-bound"
+
+        rev_entries = [e for e in audit_repo.entries if e.action == "revoke_eab"]
+        assert rev_entries[0].details["bound_account_id"] == str(bound_account_id)
+        assert rev_entries[0].details["account_revoked"] is True
+
+    def test_revoke_bound_eab_when_account_already_not_valid(
+        self,
+        eab_service_with_accounts,
+        eab_repo,
+        audit_repo,
+        account_service,
+    ):
+        """If the account is not in ``valid`` status, cascade is a no-op
+        and the audit entry records ``account_revoked=False``."""
+        cred = eab_service_with_accounts.create_eab("kid-already")
+        bound_account_id = uuid4()
+        _bind_account(eab_repo, cred, bound_account_id)
+        account_service.return_value = False  # simulate CAS miss
+
+        eab_service_with_accounts.revoke_eab(cred.id, actor_id=uuid4())
+
+        assert account_service.calls == [(bound_account_id, "eab_revoked:kid-already")]
+        rev_entries = [e for e in audit_repo.entries if e.action == "revoke_eab"]
+        assert rev_entries[0].details["account_revoked"] is False
+
+    def test_revoke_bound_eab_without_account_service_logs_warning(
+        self,
+        eab_service,
+        eab_repo,
+        audit_repo,
+        caplog,
+    ):
+        """A deployment without AccountService wired in must not crash and
+        must surface a warning so the operator notices the stale account."""
+        import logging
+
+        cred = eab_service.create_eab("kid-no-service")
+        bound_account_id = uuid4()
+        _bind_account(eab_repo, cred, bound_account_id)
+
+        with caplog.at_level(logging.WARNING, logger="acmeeh.admin.service"):
+            eab_service.revoke_eab(cred.id, actor_id=uuid4())
+
+        rev_entries = [e for e in audit_repo.entries if e.action == "revoke_eab"]
+        assert rev_entries[0].details["bound_account_id"] == str(bound_account_id)
+        assert rev_entries[0].details["account_revoked"] is False
+        assert any("AccountService is" in record.message for record in caplog.records)

@@ -74,6 +74,18 @@ def account_deactivated(account_id: UUID) -> None:
     )
 
 
+def account_revoked(account_id: UUID, reason: str = "") -> None:
+    """Log server-initiated revocation of an ACME account."""
+    _emit(
+        "acmeeh.security.account_revoked",
+        "Account revoked: %s reason=%s",
+        account_id,
+        reason,
+        reason=reason,
+        severity="WARNING",
+    )
+
+
 def key_changed(
     account_id: UUID,
     old_thumbprint: str,

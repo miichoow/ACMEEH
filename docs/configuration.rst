@@ -903,8 +903,8 @@ notifications
        ``expiration_warning``, ``order_rejected``,
        ``challenge_failed``, ``csr_validation_failed``,
        ``order_stale_recovered``, ``account_deactivated``,
-       ``key_rollover_succeeded``, ``order_quota_exceeded``,
-       ``authorization_deactivated``
+       ``account_revoked``, ``key_rollover_succeeded``,
+       ``order_quota_exceeded``, ``authorization_deactivated``
 
 hooks
 -----

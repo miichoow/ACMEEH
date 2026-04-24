@@ -490,6 +490,57 @@ class AccountService:
 
         return result
 
+    def revoke(self, account_id: UUID, *, reason: str = "") -> Account | None:
+        """Server-initiated account revocation (RFC 8555 §7.1.2).
+
+        Transitions a valid account to ``revoked`` and cascades to its
+        pending/valid authorizations. Unlike :meth:`deactivate`, this is
+        not subject to the ``allow_deactivation`` client-policy flag —
+        it is triggered by operators (e.g. when the account's EAB
+        credential is revoked).
+
+        Returns the updated account, or ``None`` when the account was
+        not in ``valid`` status (already deactivated or revoked).
+        """
+        result = self._accounts.revoke(account_id)
+        if result is None:
+            log.info(
+                "Account %s not in valid status; skipping revocation cascade",
+                account_id,
+            )
+            return None
+
+        log.info("Revoked account %s (reason=%s)", account_id, reason or "unspecified")
+        security_events.account_revoked(account_id, reason=reason)
+        if self._metrics:
+            self._metrics.increment("acmeeh_accounts_revoked_total")
+
+        deactivated_count = 0
+        if self._authz_repo is not None:
+            deactivated_count = self._authz_repo.deactivate_for_account(account_id)
+            if deactivated_count > 0:
+                log.info(
+                    "Cascaded revocation: %d authorizations deactivated for account %s",
+                    deactivated_count,
+                    account_id,
+                )
+
+        if self._notifier:
+            try:
+                self._notifier.notify(
+                    NotificationType.ACCOUNT_REVOKED,
+                    account_id,
+                    {
+                        "account_id": str(account_id),
+                        "reason": reason or "unspecified",
+                        "deactivated_authorizations": deactivated_count,
+                    },
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("Failed to send ACCOUNT_REVOKED notification")
+
+        return result
+
     def _validate_and_build_contacts(
         self,
         contact_uris: list[str] | None,

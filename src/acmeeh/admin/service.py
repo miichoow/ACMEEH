@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from acmeeh.repositories.account import AccountContactRepository, AccountRepository
     from acmeeh.repositories.certificate import CertificateRepository
     from acmeeh.repositories.notification import NotificationRepository
+    from acmeeh.services.account import AccountService
     from acmeeh.services.notification import NotificationService
 
 log = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ class AdminUserService:
         cert_repo: CertificateRepository | None = None,
         account_repo: AccountRepository | None = None,
         account_contact_repo: AccountContactRepository | None = None,
+        account_service: AccountService | None = None,
     ) -> None:
         """Initialize the admin user service with repositories and settings."""
         self._users = user_repo
@@ -64,6 +66,7 @@ class AdminUserService:
         self._cert_repo = cert_repo
         self._accounts = account_repo
         self._account_contacts = account_contact_repo
+        self._account_service = account_service
 
     def authenticate(
         self,
@@ -604,10 +607,33 @@ class AdminUserService:
                 status=500,
             )
 
+        # Cascade: any ACME account bound to this EAB must lose its
+        # privileges (RFC 8555 §7.1.2 server-initiated ``revoked``
+        # status). Without this, an account registered against a
+        # compromised EAB would still be able to place orders.
+        bound_account_id = cred.account_id
+        cascade_details: dict[str, Any] = {"kid": cred.kid}
+        if bound_account_id is not None:
+            cascade_details["bound_account_id"] = str(bound_account_id)
+            if self._account_service is not None:
+                revoked_account = self._account_service.revoke(
+                    bound_account_id,
+                    reason=f"eab_revoked:{cred.kid}",
+                )
+                cascade_details["account_revoked"] = revoked_account is not None
+            else:
+                log.warning(
+                    "EAB %s bound to account %s revoked but AccountService is "
+                    "unavailable; account status left unchanged",
+                    cred.kid,
+                    bound_account_id,
+                )
+                cascade_details["account_revoked"] = False
+
         self._log_action(
             actor_id,
             "revoke_eab",
-            details={"kid": cred.kid},
+            details=cascade_details,
             ip_address=ip_address,
         )
 

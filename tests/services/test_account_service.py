@@ -315,6 +315,91 @@ class TestDeactivate:
 
 
 # ---------------------------------------------------------------------------
+# TestRevoke
+# ---------------------------------------------------------------------------
+
+
+class TestRevoke:
+    @patch("acmeeh.services.account.security_events")
+    def test_revokes_valid_account(self, mock_se):
+        uid = uuid4()
+        revoked = _make_account(account_id=uid, status=AccountStatus.REVOKED)
+        repo = MagicMock()
+        repo.revoke.return_value = revoked
+
+        svc = _make_service(account_repo=repo)
+        result = svc.revoke(uid, reason="eab_revoked:k1")
+        assert result.status == AccountStatus.REVOKED
+        repo.revoke.assert_called_once_with(uid)
+        mock_se.account_revoked.assert_called_once_with(uid, reason="eab_revoked:k1")
+
+    @patch("acmeeh.services.account.security_events")
+    def test_cascades_to_authorizations(self, mock_se):
+        uid = uuid4()
+        revoked = _make_account(account_id=uid, status=AccountStatus.REVOKED)
+        repo = MagicMock()
+        repo.revoke.return_value = revoked
+        authz_repo = MagicMock()
+        authz_repo.deactivate_for_account.return_value = 2
+
+        svc = _make_service(account_repo=repo, authz_repo=authz_repo)
+        svc.revoke(uid)
+        authz_repo.deactivate_for_account.assert_called_once_with(uid)
+
+    @patch("acmeeh.services.account.security_events")
+    def test_notifies_with_reason(self, mock_se):
+        uid = uuid4()
+        revoked = _make_account(account_id=uid, status=AccountStatus.REVOKED)
+        repo = MagicMock()
+        repo.revoke.return_value = revoked
+        notifier = MagicMock()
+
+        svc = _make_service(account_repo=repo, notification_service=notifier)
+        svc.revoke(uid, reason="eab_revoked:k1")
+
+        notifier.notify.assert_called_once()
+        notif_type, notified_id, context = notifier.notify.call_args.args
+        from acmeeh.core.types import NotificationType  # noqa: PLC0415
+
+        assert notif_type == NotificationType.ACCOUNT_REVOKED
+        assert notified_id == uid
+        assert context["reason"] == "eab_revoked:k1"
+
+    def test_returns_none_when_not_valid(self):
+        """CAS miss (already deactivated/revoked) is a no-op, not an error —
+        admin cascade must stay idempotent."""
+        repo = MagicMock()
+        repo.revoke.return_value = None
+        authz_repo = MagicMock()
+        notifier = MagicMock()
+
+        svc = _make_service(
+            account_repo=repo,
+            authz_repo=authz_repo,
+            notification_service=notifier,
+        )
+        assert svc.revoke(uuid4()) is None
+        authz_repo.deactivate_for_account.assert_not_called()
+        notifier.notify.assert_not_called()
+
+    @patch("acmeeh.services.account.security_events")
+    def test_ignores_allow_deactivation_policy(self, mock_se):
+        """Revocation is admin-initiated and must bypass the client-facing
+        ``allow_deactivation`` flag."""
+        uid = uuid4()
+        revoked = _make_account(account_id=uid, status=AccountStatus.REVOKED)
+        repo = MagicMock()
+        repo.revoke.return_value = revoked
+
+        svc = _make_service(
+            account_repo=repo,
+            account_settings=_account_settings(allow_deactivation=False),
+        )
+        result = svc.revoke(uid)
+        assert result.status == AccountStatus.REVOKED
+
+
+# ---------------------------------------------------------------------------
 # TestAccountPolicyLockdown
 # ---------------------------------------------------------------------------
 

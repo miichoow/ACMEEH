@@ -1,0 +1,1 @@
+Account {{ account_id }} has been revoked
