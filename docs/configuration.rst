@@ -146,7 +146,7 @@ Cryptographic policies, rate limiting, and identifier restrictions.
    * - ``max_rsa_key_size``
      - integer
      - ``8192``
-     - Maximum RSA key size
+     - Maximum RSA key size for account keys
    * - ``allowed_ec_curves``
      - string[]
      - ``[P-256, P-384]``
