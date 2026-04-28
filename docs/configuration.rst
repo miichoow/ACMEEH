@@ -64,7 +64,7 @@ HTTP server settings for both development and gunicorn production modes.
    * - ``worker_class``
      - string
      - ``sync``
-     - Gunicorn worker class
+     - Gunicorn worker class. Supported values: ``sync``, ``gthread``, ``gevent``
    * - ``timeout``
      - integer
      - ``30``
@@ -138,7 +138,8 @@ Cryptographic policies, rate limiting, and identifier restrictions.
    * - ``allowed_algorithms``
      - string[]
      - ``[ES256, RS256]``
-     - Allowed JWS signing algorithms
+     - Allowed JWS signing algorithms. Supported values: ``RS256``, ``RS384``, ``RS512``,
+       ``ES256``, ``ES384``, ``ES512``
    * - ``min_rsa_key_size``
      - integer
      - ``2048``
@@ -150,15 +151,17 @@ Cryptographic policies, rate limiting, and identifier restrictions.
    * - ``allowed_ec_curves``
      - string[]
      - ``[P-256, P-384]``
-     - Allowed EC curves for account keys
+     - Allowed EC curves for account keys. Supported values: ``P-256``, ``P-384``, ``P-521``
    * - ``max_request_body_bytes``
      - integer
      - ``65536``
      - Maximum request body size
    * - ``allowed_csr_signature_algorithms``
      - string[]
-     - ``[SHA256withRSA, ...]``
-     - Allowed CSR signature algorithms
+     - ``[SHA256withRSA, SHA384withRSA, SHA512withRSA, SHA256withECDSA, SHA384withECDSA, SHA512withECDSA]``
+     - Allowed CSR signature algorithms. Supported values: ``SHA256withRSA``, ``SHA384withRSA``,
+       ``SHA512withRSA``, ``SHA256withECDSA``, ``SHA384withECDSA``, ``SHA512withECDSA``,
+       ``Ed25519``, ``Ed448``
    * - ``min_csr_rsa_key_size``
      - integer
      - ``2048``
@@ -194,7 +197,7 @@ security.rate_limits
    * - ``backend``
      - string
      - ``memory``
-     - Rate limit storage backend
+     - Rate limit storage backend. Supported values: ``memory``, ``database``
    * - ``new_nonce``
      - object
      - ``100/60s``
@@ -609,6 +612,162 @@ Example:
          validity_days: 365
          max_validity_days: 730
 
+ca.internal
+^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 15 55
+
+   * - Field
+     - Type
+     - Default
+     - Description
+   * - ``root_cert_path``
+     - string
+     - ``""``
+     - Path to the CA root certificate (PEM)
+   * - ``root_key_path``
+     - string
+     - ``""``
+     - Path to the CA private key (PEM)
+   * - ``chain_path``
+     - string
+     - ``null``
+     - Path to the certificate chain file (PEM), if any
+   * - ``serial_source``
+     - string
+     - ``database``
+     - Certificate serial number source. Supported values: ``database``, ``random``
+   * - ``hash_algorithm``
+     - string
+     - ``sha256``
+     - Hash algorithm for certificate signing. Supported values: ``sha256``, ``sha384``, ``sha512``
+
+ca.acme_proxy
+^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 15 55
+
+   * - Field
+     - Type
+     - Default
+     - Description
+   * - ``directory_url``
+     - string
+     - ``""``
+     - Upstream ACME directory URL
+   * - ``email``
+     - string
+     - ``""``
+     - Contact email for the upstream ACME account
+   * - ``storage_path``
+     - string
+     - ``./acme_proxy_storage``
+     - Directory for storing upstream account credentials
+   * - ``challenge_type``
+     - string
+     - ``dns-01``
+     - Challenge type used against the upstream CA. Supported values: ``dns-01``, ``http-01``
+   * - ``challenge_handler``
+     - string
+     - ``""``
+     - Dotted Python class path for the challenge handler
+   * - ``challenge_handler_config``
+     - object
+     - ``{}``
+     - Arbitrary config passed to the challenge handler
+   * - ``eab_kid``
+     - string
+     - ``null``
+     - EAB key ID for upstream registration (if required)
+   * - ``eab_hmac_key``
+     - string
+     - ``null``
+     - EAB HMAC key for upstream registration (if required)
+   * - ``proxy_url``
+     - string
+     - ``null``
+     - HTTP proxy URL for upstream ACME requests
+   * - ``verify_ssl``
+     - boolean
+     - ``true``
+     - Verify upstream CA TLS certificate
+   * - ``timeout_seconds``
+     - integer
+     - ``300``
+     - Timeout for upstream ACME operations
+
+ca.hsm
+^^^^^^
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 15 55
+
+   * - Field
+     - Type
+     - Default
+     - Description
+   * - ``pkcs11_library``
+     - string
+     - ``""``
+     - Path to the PKCS#11 shared library
+   * - ``token_label``
+     - string
+     - ``null``
+     - HSM token label (used when ``slot_id`` is not set)
+   * - ``slot_id``
+     - integer
+     - ``null``
+     - HSM slot ID (used when ``token_label`` is not set)
+   * - ``pin``
+     - string
+     - ``""``
+     - HSM login PIN
+   * - ``key_label``
+     - string
+     - ``null``
+     - Label of the signing key on the HSM
+   * - ``key_id``
+     - string
+     - ``null``
+     - Hex ID of the signing key on the HSM
+   * - ``key_type``
+     - string
+     - ``ec``
+     - Type of the signing key. Supported values: ``rsa``, ``ec``
+   * - ``hash_algorithm``
+     - string
+     - ``sha256``
+     - Hash algorithm for signing. Supported values: ``sha256``, ``sha384``, ``sha512``
+   * - ``issuer_cert_path``
+     - string
+     - ``""``
+     - Path to the issuer certificate (PEM)
+   * - ``chain_path``
+     - string
+     - ``null``
+     - Path to the certificate chain file (PEM), if any
+   * - ``serial_source``
+     - string
+     - ``database``
+     - Certificate serial number source. Supported values: ``database``, ``random``
+   * - ``login_required``
+     - boolean
+     - ``true``
+     - Whether to log in to the HSM before signing
+   * - ``session_pool_size``
+     - integer
+     - ``4``
+     - Number of concurrent PKCS#11 sessions (1–32)
+   * - ``session_pool_timeout_seconds``
+     - integer
+     - ``30``
+     - Timeout waiting for a session from the pool
+
 database
 --------
 
@@ -645,7 +804,8 @@ PostgreSQL connection settings.
    * - ``sslmode``
      - string
      - ``prefer``
-     - PostgreSQL SSL mode
+     - PostgreSQL SSL mode. Supported values: ``disable``, ``allow``, ``prefer``,
+       ``require``, ``verify-ca``, ``verify-full``
    * - ``min_connections``
      - integer
      - ``5``
@@ -807,7 +967,7 @@ logging
    * - ``level``
      - string
      - ``INFO``
-     - Log level: DEBUG, INFO, WARNING, ERROR
+     - Log level. Supported values: ``DEBUG``, ``INFO``, ``WARNING``, ``ERROR``, ``CRITICAL``
    * - ``format``
      - string
      - ``json``
@@ -939,8 +1099,39 @@ Lifecycle hook configuration. See :ref:`hooks` in the Development guide for writ
 hooks.registered[]
 ^^^^^^^^^^^^^^^^^^
 
-See :doc:`extensibility` for the full list of hook events, configuration fields,
-and a complete YAML example.
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 15 55
+
+   * - Field
+     - Type
+     - Default
+     - Description
+   * - ``class``
+     - string
+     - **required**
+     - Dotted Python class path (e.g., ``mypackage.hooks.MyHook``)
+   * - ``enabled``
+     - boolean
+     - ``true``
+     - Whether this hook is active
+   * - ``events``
+     - string[]
+     - all events
+     - Events that trigger this hook. Supported values: ``account.registration``,
+       ``order.creation``, ``challenge.before_validate``, ``challenge.after_validate``,
+       ``challenge.on_failure``, ``challenge.on_retry``, ``certificate.issuance``,
+       ``certificate.revocation``, ``certificate.delivery``, ``ct.submission``
+   * - ``timeout_seconds``
+     - integer
+     - (global default)
+     - Per-hook timeout override (1–300)
+   * - ``config``
+     - object
+     - ``{}``
+     - Arbitrary key/value config passed to the hook constructor
+
+See :doc:`extensibility` for detailed hook authoring guidance and a full YAML example.
 
 nonce
 -----
@@ -1130,7 +1321,7 @@ crl
    * - ``hash_algorithm``
      - string
      - ``sha256``
-     - CRL signing hash algorithm
+     - CRL signing hash algorithm. Supported values: ``sha256``, ``sha384``, ``sha512``
 
 metrics
 -------
