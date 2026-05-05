@@ -12,8 +12,6 @@ from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 from uuid import uuid4
 
-import pytest
-
 from acmeeh.app.errors import AcmeProblem
 from acmeeh.ca.base import IssuedCertificate
 from acmeeh.core.types import (
@@ -160,8 +158,8 @@ class TestConcurrentFinalize:
         for err in failures:
             assert isinstance(err, AcmeProblem)
 
-    def test_finalize_already_processing_rejected(self):
-        """Finalize on an order already in PROCESSING state is rejected."""
+    def test_finalize_already_processing_idempotent(self):
+        """Finalize on a PROCESSING order returns the order without re-issuing."""
         order_id = uuid4()
         account_id = uuid4()
         order = _make_test_order(
@@ -184,15 +182,13 @@ class TestConcurrentFinalize:
             ca_backend=ca_backend,
         )
 
-        with pytest.raises(AcmeProblem) as exc_info:
-            svc.finalize_order(order_id, b"dummy-csr", account_id)
+        result = svc.finalize_order(order_id, b"dummy-csr", account_id)
 
-        assert "not ready" in exc_info.value.detail.lower() or "orderNotReady" in str(
-            exc_info.value.error_type
-        )
+        assert result is order
+        ca_backend.sign_certificate.assert_not_called()
 
-    def test_finalize_already_valid_rejected(self):
-        """Finalize on an order already in VALID state is rejected."""
+    def test_finalize_already_valid_idempotent(self):
+        """Finalize on a VALID order returns the order without re-issuing."""
         order_id = uuid4()
         account_id = uuid4()
         order = _make_test_order(
@@ -215,9 +211,7 @@ class TestConcurrentFinalize:
             ca_backend=ca_backend,
         )
 
-        with pytest.raises(AcmeProblem) as exc_info:
-            svc.finalize_order(order_id, b"dummy-csr", account_id)
+        result = svc.finalize_order(order_id, b"dummy-csr", account_id)
 
-        assert "not ready" in exc_info.value.detail.lower() or "orderNotReady" in str(
-            exc_info.value.error_type
-        )
+        assert result is order
+        ca_backend.sign_certificate.assert_not_called()

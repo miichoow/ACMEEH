@@ -171,6 +171,13 @@ class CertificateService:
                 "Order does not belong to this account",
                 status=403,
             )
+        if order.status in (OrderStatus.VALID, OrderStatus.PROCESSING):
+            log.debug(
+                "Finalize called on order %s already in %s state — returning current order",
+                order_id,
+                order.status.value,
+            )
+            return order
         if order.status != OrderStatus.READY:
             raise AcmeProblem(
                 ORDER_NOT_READY,

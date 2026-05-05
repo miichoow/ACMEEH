@@ -488,30 +488,33 @@ class EabCredentialRepository(BaseRepository[EabCredential]):
     def sync_linkage_to_account(self, account_id: UUID) -> None:
         """Sync EAB-linked identifiers and CSR profile to an account.
 
-        Looks up the EAB credential by account_id, so no kid is needed.
-        Safe to call even if no EAB is bound — the SELECTs simply return
-        zero rows.
+        Joins via accounts.eab_credential_id (immutable, set at registration)
+        rather than eab_credentials.account_id (mutable back-pointer that
+        bind_account() overwrites on every reusable-EAB registration).
+        Using the mutable pointer meant that with eab_reusable=true only the
+        last account to call bind_account() could see the EAB's identifiers
+        via this sync; all earlier accounts got zero rows.
         """
         db = Database.get_instance()
-        # Copy allowed identifiers from all EAB credentials bound to this account
+        # Copy allowed identifiers via the immutable accounts.eab_credential_id
         db.execute(
             "INSERT INTO admin.account_allowed_identifiers "
             "(allowed_identifier_id, account_id) "
             "SELECT eai.allowed_identifier_id, %s "
             "FROM admin.eab_allowed_identifiers eai "
-            "JOIN admin.eab_credentials ec ON ec.id = eai.eab_credential_id "
-            "WHERE ec.account_id = %s "
+            "JOIN accounts a ON a.eab_credential_id = eai.eab_credential_id "
+            "WHERE a.id = %s "
             "ON CONFLICT DO NOTHING",
             (account_id, account_id),
         )
-        # Copy CSR profile (last-bound EAB wins if multiple)
+        # Copy CSR profile via the immutable accounts.eab_credential_id
         db.execute(
             "INSERT INTO admin.account_csr_profiles "
             "(account_id, csr_profile_id, assigned_by) "
             "SELECT %s, ecp.csr_profile_id, ecp.assigned_by "
             "FROM admin.eab_csr_profiles ecp "
-            "JOIN admin.eab_credentials ec ON ec.id = ecp.eab_credential_id "
-            "WHERE ec.account_id = %s "
+            "JOIN accounts a ON a.eab_credential_id = ecp.eab_credential_id "
+            "WHERE a.id = %s "
             "LIMIT 1 "
             "ON CONFLICT (account_id) DO UPDATE "
             "SET csr_profile_id = EXCLUDED.csr_profile_id, "
