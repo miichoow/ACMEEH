@@ -158,6 +158,36 @@ class TestConcurrentFinalize:
         for err in failures:
             assert isinstance(err, AcmeProblem)
 
+    def test_concurrent_finalize_cas_miss_returns_processing_order(self):
+        """CAS loser re-fetches and returns the order when it is already processing."""
+        order_id = uuid4()
+        account_id = uuid4()
+        ready_order = _make_test_order(order_id=order_id, account_id=account_id)
+        processing_order = _make_test_order(
+            order_id=order_id, account_id=account_id, status=OrderStatus.PROCESSING
+        )
+
+        order_repo = MagicMock()
+        # First call returns READY; second call (post-CAS-miss) returns PROCESSING.
+        order_repo.find_by_id.side_effect = [ready_order, processing_order]
+        order_repo.transition_status.return_value = None  # simulate CAS miss
+
+        cert_repo = MagicMock()
+        ca_settings = MagicMock()
+        ca_backend = MagicMock()
+
+        svc = CertificateService(
+            certificate_repo=cert_repo,
+            order_repo=order_repo,
+            ca_settings=ca_settings,
+            ca_backend=ca_backend,
+        )
+
+        result = svc.finalize_order(order_id, b"dummy-csr", account_id)
+
+        assert result is processing_order
+        ca_backend.sign.assert_not_called()
+
     def test_finalize_already_processing_idempotent(self):
         """Finalize on a PROCESSING order returns the order without re-issuing."""
         order_id = uuid4()

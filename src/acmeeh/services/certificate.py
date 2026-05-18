@@ -200,6 +200,11 @@ class CertificateService:
                 reason="finalization started",
             )
         if order is None:
+            # CAS miss: another worker won the race. Re-fetch and return if the
+            # order is now processing/valid (concurrent finalize), otherwise fail.
+            order = self._orders.find_by_id(order_id)
+            if order is not None and order.status in (OrderStatus.PROCESSING, OrderStatus.VALID):
+                return order
             raise AcmeProblem(
                 ORDER_NOT_READY,
                 "Order could not be transitioned to processing",
