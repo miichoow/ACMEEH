@@ -69,14 +69,15 @@ def run_gunicorn(app: Flask, settings: ServerSettings) -> None:
         # the teardown that fails.  File descriptors are reclaimed by the OS.
         def _suppress_pool_del() -> None:
             try:
-                from acmeeh.db.init import _get_raw_pool  # noqa: PLC0415
                 from pypgkit import Database  # noqa: PLC0415
+
+                from acmeeh.db.init import _get_raw_pool  # noqa: PLC0415
 
                 if Database.is_initialized():
                     raw_pool = _get_raw_pool(Database.get_instance())
                     if raw_pool is not None and hasattr(raw_pool, "_closed"):
                         raw_pool._closed = True  # noqa: SLF001
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
                 pass
 
         atexit.register(_suppress_pool_del)
