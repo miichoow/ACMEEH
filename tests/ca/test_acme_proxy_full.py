@@ -326,6 +326,12 @@ class TestStartupCheckFull:
 class TestInitAcmeClient:
     """Tests for _init_acme_client covering proxy_url, verify_ssl, EAB."""
 
+    @pytest.fixture(autouse=True)
+    def mock_acmeow_module(self):
+        mock_acmeow = MagicMock()
+        with patch.dict("sys.modules", {"acmeow": mock_acmeow}):
+            yield mock_acmeow
+
     def test_with_proxy_url(self):
         proxy = _make_proxy_settings(proxy_url="http://proxy.local:8080")
         settings = _make_ca_settings(proxy)
