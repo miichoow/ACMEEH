@@ -53,16 +53,7 @@ def run_gunicorn(app: Flask, settings: ServerSettings) -> None:
         ``fork()`` are silently killed in the child, so we also (re-)start
         background workers here.
 
-        For gevent workers we also call monkey.patch_all() here — post_fork
-        runs before ggevent's init_process, so patching now means urllib3 is
-        already patched when ggevent calls patch_all() again, suppressing the
-        MonkeyPatchWarning about ssl being imported before patching.
         """
-        if settings.worker_class == "gevent":
-            from gevent import monkey  # noqa: PLC0415
-
-            monkey.patch_all()
-
         from acmeeh.db import reinit_pool_after_fork  # noqa: PLC0415
 
         reinit_pool_after_fork()

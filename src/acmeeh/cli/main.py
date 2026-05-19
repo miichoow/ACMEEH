@@ -191,6 +191,11 @@ def main(argv: list[str] | None = None) -> None:
 
 def _run_serve(config, args) -> None:
     """Start the server (extracted for backward compat)."""
+    if not args.dev and config.settings.server.worker_class == "gevent":
+        from gevent import monkey  # noqa: PLC0415
+
+        monkey.patch_all()
+
     try:
         from acmeeh.db import init_database
 
