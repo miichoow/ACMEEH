@@ -139,15 +139,15 @@ class TestCABackendTransientFailure:
             OrderStatus.INVALID,
             error={
                 "type": "urn:ietf:params:acme:error:serverInternal",
-                "detail": "Certificate signing failed",
+                "detail": "Certificate signing failed: Connection timeout to upstream CA",
             },
         )
 
         # Metrics should record the error
         metrics.increment.assert_any_call("acmeeh_ca_signing_errors_total")
 
-    def test_transient_error_detail_not_leaked_to_client(self):
-        """Internal CA error details should not be exposed to ACME client."""
+    def test_error_detail_propagated_to_client(self):
+        """CA error detail is included in the ACME problem response."""
         order = _make_ready_order()
         ca_backend = MagicMock()
         ca_backend.sign.side_effect = CAError(
@@ -160,9 +160,8 @@ class TestCABackendTransientFailure:
         with pytest.raises(AcmeProblem) as exc_info:
             svc.finalize_order(order.id, _build_csr_der(), order.account_id)
 
-        # Client should see generic error, not internal details
-        assert "PKCS#11" not in exc_info.value.detail
         assert "Certificate signing failed" in exc_info.value.detail
+        assert "PKCS#11 session expired on slot 3" in exc_info.value.detail
 
 
 class TestCABackendPermanentFailure:
@@ -188,7 +187,7 @@ class TestCABackendPermanentFailure:
             OrderStatus.INVALID,
             error={
                 "type": "urn:ietf:params:acme:error:serverInternal",
-                "detail": "Certificate signing failed",
+                "detail": "Certificate signing failed: Policy violation: requested key usage not allowed",
             },
         )
 

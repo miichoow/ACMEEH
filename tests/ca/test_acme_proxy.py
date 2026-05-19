@@ -436,3 +436,9 @@ class TestIsRetryable:
     def test_message_based_detection(self):
         assert _is_retryable(RuntimeError("server returned 503")) is True
         assert _is_retryable(RuntimeError("rate limited 429")) is True
+
+    def test_acme_network_error_not_retryable(self):
+        class AcmeNetworkError(Exception):
+            pass
+
+        assert _is_retryable(AcmeNetworkError("POST request failed after 6 attempts")) is False

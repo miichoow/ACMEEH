@@ -441,6 +441,11 @@ class AcmeProxyBackend(CABackend):
 def _is_retryable(exc: Exception) -> bool:
     """Determine whether an upstream error is retryable via heuristics."""
     exc_name = type(exc).__name__.lower()
+    # AcmeNetworkError means acmeow already exhausted its own internal retries.
+    # Treat it as non-retryable at this level to avoid double-counting failures
+    # in the circuit breaker.
+    if "acmenetworkerror" in exc_name:
+        return False
     retryable_patterns = (
         "timeout",
         "connection",

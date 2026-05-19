@@ -339,8 +339,8 @@ class CertificateService:
                 OrderStatus.PROCESSING,
                 OrderStatus.INVALID,
                 error={
-                    "type": ("urn:ietf:params:acme:error:serverInternal"),
-                    "detail": "Certificate signing failed",
+                    "type": "urn:ietf:params:acme:error:serverInternal",
+                    "detail": f"Certificate signing failed: {exc.detail}",
                 },
             )
             if self._notifier:
@@ -359,7 +359,7 @@ class CertificateService:
                 return order  # type: ignore[return-value]
             raise AcmeProblem(
                 SERVER_INTERNAL,
-                "Certificate signing failed",
+                f"Certificate signing failed: {exc.detail}",
                 500,
             ) from exc
 

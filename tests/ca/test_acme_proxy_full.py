@@ -712,6 +712,14 @@ class TestIsRetryableFull:
 
         assert _is_retryable(NetworkFailure("something")) is True
 
+    def test_acme_network_error_not_retryable(self):
+        """AcmeNetworkError means acmeow already exhausted retries — not retryable here."""
+
+        class AcmeNetworkError(Exception):
+            pass
+
+        assert _is_retryable(AcmeNetworkError("POST request failed after 6 attempts")) is False
+
 
 # ===========================================================================
 # Upstream handlers — inner callback tests
