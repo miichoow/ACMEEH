@@ -72,6 +72,7 @@ def _make_ca_settings(backend: str = "internal") -> CASettings:
             proxy_url=None,
             verify_ssl=True,
             timeout_seconds=300,
+            max_retries=5,
         ),
         hsm=HsmSettings(
             pkcs11_library="",

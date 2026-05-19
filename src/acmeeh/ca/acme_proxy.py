@@ -139,10 +139,14 @@ class AcmeProxyBackend(CABackend):
             Path to the local storage directory.
 
         """
+        from acmeow import RetryConfig  # noqa: PLC0415
+
         client_kwargs: dict[str, Any] = {
             "server_url": self._proxy.directory_url,
             "email": self._proxy.email,
             "storage_path": str(storage),
+            "timeout": self._proxy.timeout_seconds,
+            "retry_config": RetryConfig(max_retries=self._proxy.max_retries),
         }
         if self._proxy.proxy_url:
             client_kwargs["proxy_url"] = self._proxy.proxy_url

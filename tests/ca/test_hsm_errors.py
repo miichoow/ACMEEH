@@ -105,6 +105,7 @@ def _make_ca_settings(hsm: HsmSettings | None = None) -> CASettings:
             proxy_url=None,
             verify_ssl=True,
             timeout_seconds=300,
+            max_retries=5,
         ),
         hsm=hsm or _make_hsm_settings(),
         circuit_breaker_failure_threshold=5,

@@ -43,6 +43,7 @@ def _make_proxy_settings(**overrides) -> AcmeProxySettings:
         "proxy_url": None,
         "verify_ssl": True,
         "timeout_seconds": 300,
+        "max_retries": 5,
     }
     defaults.update(overrides)
     return AcmeProxySettings(**defaults)
@@ -220,6 +221,8 @@ class TestStartupCheck:
         call_kwargs = mock_acmeow.AcmeClient.call_args[1]
         assert call_kwargs["server_url"] == "https://acme.upstream.example/directory"
         assert call_kwargs["email"] == "admin@example.com"
+        assert call_kwargs["timeout"] == 300
+        assert call_kwargs["retry_config"] is not None
         mock_client.create_account.assert_called_once_with()
         assert backend._client is mock_client
 

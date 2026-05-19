@@ -316,7 +316,8 @@
             "eab_hmac_key":             { "type": ["string", "null"], "default": null },
             "proxy_url":                { "type": ["string", "null"], "default": null },
             "verify_ssl":               { "type": "boolean", "default": true },
-            "timeout_seconds":          { "$ref": "#/$defs/positive_integer", "default": 300 }
+            "timeout_seconds":          { "$ref": "#/$defs/positive_integer", "default": 300 },
+            "max_retries":              { "$ref": "#/$defs/non_negative_integer", "default": 5 }
           }
         },
         "hsm": {

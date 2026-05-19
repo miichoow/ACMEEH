@@ -57,6 +57,7 @@ def _make_proxy_settings(**overrides) -> AcmeProxySettings:
         "proxy_url": None,
         "verify_ssl": True,
         "timeout_seconds": 300,
+        "max_retries": 5,
     }
     defaults.update(overrides)
     return AcmeProxySettings(**defaults)
