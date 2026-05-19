@@ -54,9 +54,32 @@ def run_gunicorn(app: Flask, settings: ServerSettings) -> None:
         background workers here.
 
         """
+        import atexit  # noqa: PLC0415
+
         from acmeeh.db import reinit_pool_after_fork  # noqa: PLC0415
 
         reinit_pool_after_fork()
+
+        # gevent monkey-patches threading.Thread, so psycopg_pool's background
+        # threads become greenlets.  On worker exit the gevent hub is finalized
+        # before Python GC runs __del__ on the pool, causing:
+        #   RuntimeError: greenlet is being finalized
+        # in psycopg_pool._acompat.gather().  Marking the pool closed during
+        # atexit (while the hub is still alive) prevents __del__ from running
+        # the teardown that fails.  File descriptors are reclaimed by the OS.
+        def _suppress_pool_del() -> None:
+            try:
+                from acmeeh.db.init import _get_raw_pool  # noqa: PLC0415
+                from pypgkit import Database  # noqa: PLC0415
+
+                if Database.is_initialized():
+                    raw_pool = _get_raw_pool(Database.get_instance())
+                    if raw_pool is not None and hasattr(raw_pool, "_closed"):
+                        raw_pool._closed = True  # noqa: SLF001
+            except Exception:  # noqa: BLE001
+                pass
+
+        atexit.register(_suppress_pool_del)
 
         from acmeeh.app.factory import start_workers  # noqa: PLC0415
 
