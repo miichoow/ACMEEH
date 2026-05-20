@@ -42,9 +42,16 @@ class CAError(Exception):
 
     """
 
-    def __init__(self, detail: str, *, retryable: bool = False) -> None:
+    def __init__(
+        self,
+        detail: str,
+        *,
+        retryable: bool = False,
+        acme_error_type: str = "urn:ietf:params:acme:error:serverInternal",
+    ) -> None:
         self.detail = detail
         self.retryable = retryable
+        self.acme_error_type = acme_error_type
         super().__init__(detail)
 
 

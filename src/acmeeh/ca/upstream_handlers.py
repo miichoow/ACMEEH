@@ -204,8 +204,8 @@ class CallbackHttpFactory(UpstreamHandlerFactory):
             )
 
         return CallbackHttpHandler(
-            deploy=deploy,
-            cleanup=cleanup,
+            setup_callback=deploy,
+            cleanup_callback=cleanup,
         )
 
 

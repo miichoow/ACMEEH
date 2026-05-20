@@ -241,12 +241,20 @@ class AcmeProxyBackend(CABackend):
             except CAError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                from acmeow.exceptions import AcmeAuthorizationError  # noqa: PLC0415
+
                 exc_type = type(exc).__name__
                 retryable = _is_retryable(exc)
                 msg = f"Upstream ACME error ({exc_type}): {exc}"
+                acme_error_type = (
+                    "urn:ietf:params:acme:error:unauthorized"
+                    if isinstance(exc, AcmeAuthorizationError)
+                    else "urn:ietf:params:acme:error:serverInternal"
+                )
                 raise CAError(
                     msg,
                     retryable=retryable,
+                    acme_error_type=acme_error_type,
                 ) from exc
 
         # Parse the leaf certificate to extract metadata

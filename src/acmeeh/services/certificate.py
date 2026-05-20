@@ -339,7 +339,7 @@ class CertificateService:
                 OrderStatus.PROCESSING,
                 OrderStatus.INVALID,
                 error={
-                    "type": "urn:ietf:params:acme:error:serverInternal",
+                    "type": exc.acme_error_type,
                     "detail": f"Certificate signing failed: {exc.detail}",
                 },
             )

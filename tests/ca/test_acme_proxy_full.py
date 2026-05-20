@@ -915,8 +915,8 @@ class TestCallbackHttpFactoryFull:
 
         mock_handler_cls.assert_called_once()
         kwargs = mock_handler_cls.call_args[1]
-        assert callable(kwargs["deploy"])
-        assert callable(kwargs["cleanup"])
+        assert callable(kwargs["setup_callback"])
+        assert callable(kwargs["cleanup_callback"])
 
     def test_deploy_callback_calls_subprocess(self, mock_acmeow_handlers):
         """The inner deploy closure calls subprocess.run correctly."""
@@ -932,7 +932,7 @@ class TestCallbackHttpFactoryFull:
             }
         )
 
-        deploy_fn = mock_handler_cls.call_args[1]["deploy"]
+        deploy_fn = mock_handler_cls.call_args[1]["setup_callback"]
 
         with patch("acmeeh.ca.upstream_handlers.subprocess.run") as mock_run:
             deploy_fn("example.com", "my-token", "my-key-authz")
@@ -958,7 +958,7 @@ class TestCallbackHttpFactoryFull:
             }
         )
 
-        cleanup_fn = mock_handler_cls.call_args[1]["cleanup"]
+        cleanup_fn = mock_handler_cls.call_args[1]["cleanup_callback"]
 
         with patch("acmeeh.ca.upstream_handlers.subprocess.run") as mock_run:
             cleanup_fn("example.com", "my-token")
@@ -983,7 +983,7 @@ class TestCallbackHttpFactoryFull:
             }
         )
 
-        deploy_fn = mock_handler_cls.call_args[1]["deploy"]
+        deploy_fn = mock_handler_cls.call_args[1]["setup_callback"]
         with patch("acmeeh.ca.upstream_handlers.subprocess.run") as mock_run:
             deploy_fn("d", "t", "k")
             assert mock_run.call_args[1]["timeout"] == 60

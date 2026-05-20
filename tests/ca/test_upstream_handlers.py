@@ -121,8 +121,8 @@ class TestCallbackHttpFactory:
         )
         mock_handler_cls.assert_called_once()
         kwargs = mock_handler_cls.call_args[1]
-        assert callable(kwargs["deploy"])
-        assert callable(kwargs["cleanup"])
+        assert callable(kwargs["setup_callback"])
+        assert callable(kwargs["cleanup_callback"])
 
 
 class TestLoadUpstreamHandler:
