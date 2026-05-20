@@ -326,7 +326,7 @@ class CertificateService:
                 ct_submitter=self._ct_submitter,
             )
         except CAError as exc:
-            log.exception(
+            log.error(
                 "CA backend signing failed: %s",
                 exc.detail,
             )
