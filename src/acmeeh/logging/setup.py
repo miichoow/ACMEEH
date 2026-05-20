@@ -240,7 +240,7 @@ def configure_logging(settings: LoggingSettings) -> logging.Logger:
                 )
 
     # ── Quieten noisy third-party loggers ───────────────────────────
-    for lib in ("werkzeug", "gunicorn", "gunicorn.access", "gunicorn.error"):
+    for lib in ("werkzeug", "gunicorn", "gunicorn.access", "gunicorn.error", "acmeow"):
         logging.getLogger(lib).setLevel(logging.WARNING)
 
     return root
