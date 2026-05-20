@@ -241,17 +241,20 @@ class AcmeProxyBackend(CABackend):
             except CAError:
                 raise
             except Exception as exc:  # noqa: BLE001
+                is_auth_error = False
                 try:
                     from acmeow.exceptions import AcmeAuthorizationError  # noqa: PLC0415
+
+                    is_auth_error = isinstance(exc, AcmeAuthorizationError)
                 except ImportError:
-                    AcmeAuthorizationError = None  # type: ignore[assignment,misc]
+                    pass
 
                 exc_type = type(exc).__name__
                 retryable = _is_retryable(exc)
                 msg = f"Upstream ACME error ({exc_type}): {exc}"
                 acme_error_type = (
                     "urn:ietf:params:acme:error:unauthorized"
-                    if AcmeAuthorizationError is not None and isinstance(exc, AcmeAuthorizationError)
+                    if is_auth_error
                     else "urn:ietf:params:acme:error:serverInternal"
                 )
                 raise CAError(
