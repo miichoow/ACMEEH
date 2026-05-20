@@ -699,6 +699,17 @@ ca.acme_proxy
      - integer
      - ``300``
      - Timeout for upstream ACME operations
+   * - ``max_retries``
+     - integer
+     - ``5``
+     - Retry count for transient upstream network failures
+   * - ``order_ready_timeout``
+     - integer
+     - ``30``
+     - Maximum seconds to wait for the upstream CA to transition an order
+       from ``pending`` to ``ready`` after challenge validation. Polled
+       every 2 seconds. Increase this if the upstream CA is slow to
+       acknowledge authorization results.
 
 ca.hsm
 ^^^^^^

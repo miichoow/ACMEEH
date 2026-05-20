@@ -317,7 +317,8 @@
             "proxy_url":                { "type": ["string", "null"], "default": null },
             "verify_ssl":               { "type": "boolean", "default": true },
             "timeout_seconds":          { "$ref": "#/$defs/positive_integer", "default": 300 },
-            "max_retries":              { "$ref": "#/$defs/non_negative_integer", "default": 5 }
+            "max_retries":              { "$ref": "#/$defs/non_negative_integer", "default": 5 },
+            "order_ready_timeout":      { "$ref": "#/$defs/positive_integer", "default": 30 }
           }
         },
         "hsm": {

@@ -67,9 +67,23 @@ class TestSchemaValidation:
                 "proxy_url": "http://proxy:3128",
                 "verify_ssl": False,
                 "timeout_seconds": 600,
+                "max_retries": 3,
+                "order_ready_timeout": 60,
             }
         )
         validate(instance=cfg, schema=schema)
+
+    def test_order_ready_timeout_must_be_positive(self, schema):
+        cfg = _minimal_config(
+            acme_proxy={
+                "directory_url": "https://example.com",
+                "email": "admin@example.com",
+                "challenge_handler": "callback_dns",
+                "order_ready_timeout": 0,
+            }
+        )
+        with pytest.raises(ValidationError, match="minimum"):
+            validate(instance=cfg, schema=schema)
 
     def test_invalid_challenge_type(self, schema):
         cfg = _minimal_config(
@@ -146,6 +160,8 @@ class TestSettingsBuilding:
         assert proxy.proxy_url is None
         assert proxy.verify_ssl is True
         assert proxy.timeout_seconds == 300
+        assert proxy.max_retries == 5
+        assert proxy.order_ready_timeout == 30
 
     def test_build_acme_proxy_settings_custom(self):
         data = {
@@ -164,6 +180,8 @@ class TestSettingsBuilding:
                     "proxy_url": "http://proxy:8080",
                     "verify_ssl": False,
                     "timeout_seconds": 600,
+                    "max_retries": 10,
+                    "order_ready_timeout": 60,
                 }
             },
         }
@@ -181,6 +199,8 @@ class TestSettingsBuilding:
         assert proxy.proxy_url == "http://proxy:8080"
         assert proxy.verify_ssl is False
         assert proxy.timeout_seconds == 600
+        assert proxy.max_retries == 10
+        assert proxy.order_ready_timeout == 60
 
     def test_acme_proxy_settings_frozen(self):
         data = {

@@ -44,6 +44,7 @@ def _make_proxy_settings(**overrides) -> AcmeProxySettings:
         "verify_ssl": True,
         "timeout_seconds": 300,
         "max_retries": 5,
+        "order_ready_timeout": 30,
     }
     defaults.update(overrides)
     return AcmeProxySettings(**defaults)
@@ -223,8 +224,28 @@ class TestStartupCheck:
         assert call_kwargs["email"] == "admin@example.com"
         assert call_kwargs["timeout"] == 300
         assert call_kwargs["retry_config"] is not None
+        assert call_kwargs["order_ready_timeout"] == 30
         mock_client.create_account.assert_called_once_with()
         assert backend._client is mock_client
+
+    @patch("acmeeh.ca.acme_proxy.load_upstream_handler")
+    @patch("acmeeh.ca.acme_proxy.Path.mkdir")
+    def test_startup_passes_order_ready_timeout_to_client(self, mock_mkdir, mock_handler):
+        mock_handler.return_value = MagicMock()
+        mock_client = MagicMock()
+        mock_acmeow = MagicMock()
+        mock_acmeow.AcmeClient.return_value = mock_client
+
+        proxy = _make_proxy_settings(order_ready_timeout=60)
+        settings = _make_ca_settings(proxy)
+        backend = AcmeProxyBackend(settings)
+
+        mock_acmeow_enums = MagicMock()
+        with patch.dict("sys.modules", {"acmeow": mock_acmeow, "acmeow.enums": mock_acmeow_enums}):
+            backend.startup_check()
+
+        call_kwargs = mock_acmeow.AcmeClient.call_args[1]
+        assert call_kwargs["order_ready_timeout"] == 60
 
     @patch("acmeeh.ca.acme_proxy.load_upstream_handler")
     @patch("acmeeh.ca.acme_proxy.Path.mkdir")

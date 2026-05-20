@@ -473,6 +473,7 @@ class AcmeProxySettings:
     verify_ssl: bool
     timeout_seconds: int
     max_retries: int
+    order_ready_timeout: int
 
 
 @dataclass(frozen=True)
@@ -576,6 +577,7 @@ def _build_ca(data: dict | None) -> CASettings:
             verify_ssl=proxy_d.get("verify_ssl", True),
             timeout_seconds=proxy_d.get("timeout_seconds", 300),
             max_retries=proxy_d.get("max_retries", 5),
+            order_ready_timeout=proxy_d.get("order_ready_timeout", 30),
         ),
         hsm=HsmSettings(
             pkcs11_library=hsm_d.get("pkcs11_library", ""),

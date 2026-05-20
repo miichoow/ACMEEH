@@ -496,6 +496,14 @@ Configuration
    * - ``timeout_seconds``
      - ``300``
      - Request timeout
+   * - ``max_retries``
+     - ``5``
+     - Retry count for transient upstream network failures
+   * - ``order_ready_timeout``
+     - ``30``
+     - Maximum seconds to wait for the upstream CA to transition an order
+       from ``pending`` to ``ready`` after challenge validation (polled
+       every 2 s). Increase for CAs with slow authorization processing.
 
 Behavioral Notes
 ^^^^^^^^^^^^^^^^

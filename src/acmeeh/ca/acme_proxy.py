@@ -147,6 +147,7 @@ class AcmeProxyBackend(CABackend):
             "storage_path": str(storage),
             "timeout": self._proxy.timeout_seconds,
             "retry_config": RetryConfig(max_retries=self._proxy.max_retries),
+            "order_ready_timeout": self._proxy.order_ready_timeout,
         }
         if self._proxy.proxy_url:
             client_kwargs["proxy_url"] = self._proxy.proxy_url
