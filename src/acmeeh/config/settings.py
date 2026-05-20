@@ -473,7 +473,7 @@ class AcmeProxySettings:
     verify_ssl: bool
     timeout_seconds: int
     max_retries: int
-    order_ready_timeout: int
+    order_ready_timeout: int = 30
 
 
 @dataclass(frozen=True)
