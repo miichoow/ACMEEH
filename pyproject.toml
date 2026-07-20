@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "acmeeh"
-version = "2.0.1"
+version = "2.1.0"
 description = "Enterprise ACME (RFC 8555) server for internal PKI"
 readme = "README.md"
 license = "Apache-2.0"
