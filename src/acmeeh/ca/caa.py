@@ -16,7 +16,7 @@ import dns.name
 import dns.rdatatype
 import dns.resolver
 
-from acmeeh.app.errors import CAA, AcmeProblem
+from acmeeh.app.errors import CAA, DNS, AcmeProblem
 
 if TYPE_CHECKING:
     from acmeeh.config.settings import DnsSettings
@@ -90,7 +90,16 @@ class CAAValidator:
                 continue
             except dns.exception.DNSException as exc:
                 log.warning("CAA lookup failed for %s: %s", name, exc)
-                return  # Fail open on DNS errors per RFC 8659
+                # Fail closed: an unresolvable CAA lookup must not be treated
+                # as "no CAA records found". RFC 8659 §4.1 requires issuance
+                # to be refused if CAA records cannot be retrieved due to an
+                # error, to avoid an attacker using DNS failures to bypass
+                # CAA restrictions.
+                raise AcmeProblem(
+                    DNS,
+                    f"CAA lookup for {name} failed: {exc}",
+                    status=500,
+                ) from exc
 
             # CAA records found — collect tags
             issue_values = []

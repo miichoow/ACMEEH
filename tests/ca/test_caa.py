@@ -192,18 +192,21 @@ class TestDomainTreeWalking:
             validator.check("sub.example.com")
 
 
-class TestDNSErrorFailOpen:
-    """Fail-open on DNS errors (dns.exception.DNSException)."""
+class TestDNSErrorFailClosed:
+    """Fail-closed on DNS errors (dns.exception.DNSException)."""
 
-    def test_dns_error_fails_open(self):
+    def test_dns_error_fails_closed(self):
         validator = CAAValidator(("ca.example.com",), _dns_settings())
         with patch("dns.resolver.Resolver") as MockResolver:
             instance = MockResolver.return_value
             instance.resolve.side_effect = dns.exception.DNSException("timeout")
             instance.nameservers = []
             instance.lifetime = 5
-            # Should not raise -- fail open per RFC 8659
-            validator.check("www.example.com")
+            # Must raise -- an unresolvable CAA lookup must not be treated
+            # as "no CAA records found" (RFC 8659 §4.1)
+            with pytest.raises(AcmeProblem) as exc_info:
+                validator.check("www.example.com")
+            assert exc_info.value.status == 500
 
 
 class TestEmptyCAAIdentities:
