@@ -115,3 +115,43 @@ class AutoAcceptTlsValidator(ChallengeValidator):
             identifier_type,
             identifier_value,
         )
+
+
+class AutoAcceptDnsPersistValidator(ChallengeValidator):
+    """Auto-accept validator for DNS-PERSIST-01 challenges.
+
+    Keeps ``uses_token`` false so the serialized challenge object still
+    omits ``token`` and carries ``accounturi``/``issuer-domain-names``,
+    matching what a client would see from the real validator.
+    """
+
+    challenge_type: ClassVar[ChallengeType] = ChallengeType.DNS_PERSIST_01
+    supported_identifier_types: ClassVar[frozenset[str]] = frozenset({"dns"})
+    uses_token: ClassVar[bool] = False
+
+    def __init__(self, settings: Any = None) -> None:  # noqa: ANN401
+        """Initialize the DNS-PERSIST-01 auto-accept validator."""
+        super().__init__(settings=settings)
+        self._auto_validate = True
+        self._max_retries = 0
+
+    @property
+    def issuer_domain_names(self) -> tuple[str, ...]:
+        """Issuer Domain Names advertised in the challenge object."""
+        return tuple(getattr(self.settings, "issuer_domain_names", ()) or ())
+
+    def validate(  # noqa: ARG002
+        self,
+        *,
+        token: str,
+        jwk: dict[str, Any],
+        identifier_type: str,
+        identifier_value: str,
+    ) -> None:
+        """Validate a DNS-PERSIST-01 challenge by auto-accepting it."""
+        log.info(
+            "Auto-accepting %s challenge for %s:%s",
+            self.challenge_type.value,
+            identifier_type,
+            identifier_value,
+        )

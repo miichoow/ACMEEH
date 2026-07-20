@@ -14,7 +14,8 @@ Access pattern::
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import contextlib
+from dataclasses import dataclass, field
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -329,6 +330,28 @@ class Dns01Settings:
 
 
 @dataclass(frozen=True)
+class DnsPersist01Settings:
+    """DNS-PERSIST-01 challenge validation settings (draft-ietf-acme-dns-persist).
+
+    ``issuer_domain_names`` are the Issuer Domain Names this CA answers to.
+    They are offered to clients in the challenge object and a published
+    record must name one of them.  Names are normalized to lowercase
+    A-labels without a trailing dot.
+    """
+
+    issuer_domain_names: tuple[str, ...]
+    resolvers: tuple[str, ...]
+    timeout_seconds: int
+    propagation_wait_seconds: int
+    max_retries: int
+    auto_validate: bool
+    require_dnssec: bool
+    require_authoritative: bool
+    allow_wildcard_policy: bool
+    allow_subdomain_policy: bool
+
+
+@dataclass(frozen=True)
 class TlsAlpn01Settings:
     """TLS-ALPN-01 challenge validation settings."""
 
@@ -347,6 +370,21 @@ class BackgroundWorkerSettings:
     stale_seconds: int
 
 
+_DEFAULT_DNS_PERSIST = DnsPersist01Settings(
+    issuer_domain_names=(),
+    resolvers=(),
+    timeout_seconds=30,
+    propagation_wait_seconds=10,
+    max_retries=5,
+    auto_validate=False,
+    require_dnssec=False,
+    require_authoritative=False,
+    allow_wildcard_policy=True,
+    allow_subdomain_policy=False,
+)
+"""Fallback used when the ``challenges.dnspersist01`` section is absent."""
+
+
 @dataclass(frozen=True)
 class ChallengeSettings:
     """Aggregate challenge configuration for all challenge types."""
@@ -360,6 +398,23 @@ class ChallengeSettings:
     retry_after_seconds: int
     backoff_base_seconds: int
     backoff_max_seconds: int
+    # Defaulted (and therefore last): the whole section is optional, and
+    # DNS-PERSIST-01 stays inert until issuer_domain_names is configured.
+    dnspersist01: DnsPersist01Settings = field(default_factory=lambda: _DEFAULT_DNS_PERSIST)
+
+
+def _normalize_issuer_name(name: str) -> str:
+    """Normalize an Issuer Domain Name to a lowercase A-label with no trailing dot.
+
+    draft-ietf-acme-dns-persist requires the names offered in the challenge
+    object to be normalized, and record comparison is a simple string match,
+    so normalizing once at config load keeps both sides consistent.
+    """
+    normalized = name.strip().rstrip(".")
+    # Not an IDN (or not encodable) — fall back to a plain lowercase form.
+    with contextlib.suppress(UnicodeError, ValueError):
+        normalized = normalized.encode("idna").decode("ascii")
+    return normalized.lower()
 
 
 def _build_challenges(data: dict | None) -> ChallengeSettings:
@@ -367,6 +422,7 @@ def _build_challenges(data: dict | None) -> ChallengeSettings:
     h = d.get("http01") or {}
     dn = d.get("dns01") or {}
     t = d.get("tlsalpn01") or {}
+    dp = d.get("dnspersist01") or {}
     bw = d.get("background_worker") or {}
     return ChallengeSettings(
         enabled=tuple(d.get("enabled", ["http-01"])),
@@ -403,6 +459,20 @@ def _build_challenges(data: dict | None) -> ChallengeSettings:
             timeout_seconds=t.get("timeout_seconds", 10),
             max_retries=t.get("max_retries", 3),
             auto_validate=t.get("auto_validate", True),
+        ),
+        dnspersist01=DnsPersist01Settings(
+            issuer_domain_names=tuple(
+                _normalize_issuer_name(n) for n in dp.get("issuer_domain_names", [])
+            ),
+            resolvers=tuple(dp.get("resolvers", [])),
+            timeout_seconds=dp.get("timeout_seconds", 30),
+            propagation_wait_seconds=dp.get("propagation_wait_seconds", 10),
+            max_retries=dp.get("max_retries", 5),
+            auto_validate=dp.get("auto_validate", False),
+            require_dnssec=dp.get("require_dnssec", False),
+            require_authoritative=dp.get("require_authoritative", False),
+            allow_wildcard_policy=dp.get("allow_wildcard_policy", True),
+            allow_subdomain_policy=dp.get("allow_subdomain_policy", False),
         ),
         background_worker=BackgroundWorkerSettings(
             enabled=bw.get("enabled", False),

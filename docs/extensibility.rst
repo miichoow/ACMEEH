@@ -43,8 +43,9 @@ Custom Challenge Validators
 ---------------------------
 
 Challenge validators implement the server-side verification logic for ACME challenges.
-The three built-in validators (``http-01``, ``dns-01``, ``tls-alpn-01``) cover the
-standard RFC 8555 challenge types, but you can replace or supplement them with custom
+The four built-in validators (``http-01``, ``dns-01``, ``tls-alpn-01`` and
+``dns-persist-01``) cover the standard RFC 8555 challenge types plus
+draft-ietf-acme-dns-persist, but you can replace or supplement them with custom
 implementations.
 
 Use cases:
@@ -120,6 +121,72 @@ Required Class Attributes
    * - ``supported_identifier_types``
      - ``frozenset[str]``
      - Set of identifier types this validator supports: ``"dns"``, ``"ip"``, or both.
+
+Optional Class Attributes
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+   :widths: 30 20 50
+
+   * - Attribute
+     - Default
+     - Description
+   * - ``requires_context``
+     - ``False``
+     - When ``True``, ``validate()`` additionally receives a ``context``
+       keyword holding a ``ChallengeContext``. Leave it ``False`` unless you
+       need it — validators written against the four-argument signature keep
+       working unchanged.
+   * - ``uses_token``
+     - ``True``
+     - Whether this challenge type carries a token. Set ``False`` for tokenless
+       types so the serialized challenge object omits ``token``.
+
+ChallengeContext
+^^^^^^^^^^^^^^^^
+
+Most validators need only the token, the account JWK and the identifier. A
+validator that needs more — for example one that binds validation to a specific
+account, as ``dns-persist-01`` does — sets ``requires_context = True`` and
+receives:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 20 55
+
+   * - Field
+     - Type
+     - Description
+   * - ``account_uri``
+     - ``str | None``
+     - The requesting account's ACME URL, or ``None`` if the server could not
+       build one.
+   * - ``is_wildcard``
+     - ``bool``
+     - Whether the authorization was created for a wildcard identifier. The
+       ``identifier_value`` passed to ``validate()`` always has the ``*.``
+       prefix stripped, so this is the only signal.
+
+.. code-block:: python
+
+   from acmeeh.challenge.base import ChallengeContext, ChallengeValidator
+
+   class MyAccountBoundValidator(ChallengeValidator):
+       challenge_type = ChallengeType.DNS_01
+       requires_context = True
+
+       def validate(
+           self,
+           *,
+           token: str,
+           jwk: dict,
+           identifier_type: str,
+           identifier_value: str,
+           context: ChallengeContext | None = None,
+       ) -> None:
+           account_uri = context.account_uri if context else None
+           ...
 
 Properties (auto-populated from settings)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

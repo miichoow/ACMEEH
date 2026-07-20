@@ -383,7 +383,8 @@ Challenge validation configuration.
    * - ``enabled``
      - string[]
      - ``[http-01]``
-     - Enabled challenge types: ``http-01``, ``dns-01``, ``tls-alpn-01``
+     - Enabled challenge types: ``http-01``, ``dns-01``, ``tls-alpn-01``,
+       ``dns-persist-01``, or ``ext:<module.Class>`` for a custom validator
    * - ``auto_accept``
      - boolean
      - ``false``
@@ -504,6 +505,127 @@ challenges.tlsalpn01
      - boolean
      - ``true``
      - Auto-validate this challenge type
+
+challenges.dnspersist01
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Settings for the DNS-PERSIST-01 challenge type
+(`draft-ietf-acme-dns-persist <https://datatracker.ietf.org/doc/draft-ietf-acme-dns-persist/>`_).
+
+The subscriber publishes a long-lived TXT record at
+``_validation-persist.{domain}`` whose value follows the RFC 8659
+``issue-value`` syntax and names both an Issuer Domain Name and the ACME
+account permitted to request issuance::
+
+    _validation-persist.example.com. IN TXT "ca.example; accounturi=https://acme.example/acct/1"
+
+Because the record authorizes future issuance, it is meant to stay published;
+renewals then need no DNS changes.
+
+.. important::
+
+   ``issuer_domain_names`` has no default. Until you set at least one name,
+   every DNS-PERSIST-01 validation fails with a configuration error, because
+   no published record could ever name this CA.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 10 15 55
+
+   * - Field
+     - Type
+     - Default
+     - Description
+   * - ``issuer_domain_names``
+     - string[]
+     - ``[]``
+     - Issuer Domain Names this CA answers to (max 10). Advertised to clients
+       in the challenge object's ``issuer-domain-names`` field; a published
+       record must name one of them. Normalized to lowercase A-labels.
+   * - ``resolvers``
+     - string[]
+     - ``[]``
+     - DNS resolver addresses (empty = system default)
+   * - ``timeout_seconds``
+     - integer
+     - ``30``
+     - DNS query timeout
+   * - ``propagation_wait_seconds``
+     - integer
+     - ``10``
+     - Wait time for DNS propagation
+   * - ``max_retries``
+     - integer
+     - ``5``
+     - Maximum validation retries
+   * - ``auto_validate``
+     - boolean
+     - ``false``
+     - Auto-validate this challenge type
+   * - ``require_dnssec``
+     - boolean
+     - ``false``
+     - Require DNSSEC validation
+   * - ``require_authoritative``
+     - boolean
+     - ``false``
+     - Require response from authoritative nameserver
+   * - ``allow_wildcard_policy``
+     - boolean
+     - ``true``
+     - Honour ``policy=wildcard`` in published records. Set ``false`` to
+       refuse wildcard issuance through this challenge type entirely.
+   * - ``allow_subdomain_policy``
+     - boolean
+     - ``false``
+     - Let a ``policy=wildcard`` record on an ancestor domain authorize names
+       beneath it. Off by default: it grants broader authority than clients
+       expect (lego, for one, only ever publishes and checks a record at the
+       exact validation name) and costs an extra DNS lookup per ancestor on
+       every failed validation. Turn it on deliberately.
+
+Record parameters
+"""""""""""""""""
+
+.. list-table::
+   :header-rows: 1
+   :widths: 20 15 65
+
+   * - Parameter
+     - Required
+     - Meaning
+   * - ``accounturi``
+     - yes
+     - URI of the ACME account permitted to request issuance. Compared with
+       RFC 3986 Simple String Comparison — no case folding, no normalization.
+   * - ``policy=wildcard``
+     - no
+     - Authorizes wildcard certificates for the name and issuance for
+       subdomains beneath it.
+   * - ``persistUntil``
+     - no
+     - Base-10 UNIX timestamp after which the record is no longer used for
+       new validations. Already-issued certificates are unaffected.
+
+Records naming a different Issuer Domain Name, and unrelated TXT records at
+the same name, are ignored rather than treated as failures — so a
+DNS-PERSIST-01 record can coexist with SPF records and with records for other
+CAs.
+
+Example
+"""""""
+
+.. code-block:: yaml
+
+   challenges:
+     enabled:
+       - http-01
+       - dns-persist-01
+     dnspersist01:
+       issuer_domain_names:
+         - ca.example
+       require_dnssec: true
+       allow_subdomain_policy: false
 
 challenges.background_worker
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -428,6 +428,54 @@ class TestChallengeValidation:
                 },
             )
 
+    def test_dns_persist_01_is_a_known_type(self, tmp_path):
+        """draft-ietf-acme-dns-persist support must be selectable by name."""
+        config = _make_config(
+            tmp_path,
+            {
+                "challenges": {
+                    "enabled": ["http-01", "dns-persist-01"],
+                    "dnspersist01": {"issuer_domain_names": ["ca.example"]},
+                },
+            },
+        )
+        assert "dns-persist-01" in config.settings.challenges.enabled
+
+    def test_dns_persist_01_without_issuer_domain_names_rejected(self, tmp_path):
+        """Enabling it with no issuer names would fail every validation."""
+        with pytest.raises(ConfigValidationError, match="issuer_domain_names is empty"):
+            _make_config(
+                tmp_path,
+                {
+                    "challenges": {"enabled": ["http-01", "dns-persist-01"]},
+                },
+            )
+
+    def test_dns_persist_01_issuer_names_normalized(self, tmp_path):
+        """The draft requires normalized names, and matching is a string compare."""
+        config = _make_config(
+            tmp_path,
+            {
+                "challenges": {
+                    "enabled": ["dns-persist-01"],
+                    "dnspersist01": {"issuer_domain_names": ["CA.Example.", "Alt.EXAMPLE"]},
+                },
+            },
+        )
+        assert config.settings.challenges.dnspersist01.issuer_domain_names == (
+            "ca.example",
+            "alt.example",
+        )
+
+    def test_dnspersist01_defaults_when_section_absent(self, tmp_path):
+        """The section is optional; the type simply stays inert."""
+        config = _make_config(tmp_path, {"challenges": {"enabled": ["http-01"]}})
+        persist = config.settings.challenges.dnspersist01
+        assert persist.issuer_domain_names == ()
+        assert persist.allow_wildcard_policy is True
+        # Off by default: it grants broader authority than clients expect.
+        assert persist.allow_subdomain_policy is False
+
     def test_auto_accept_with_internal_backend_and_no_allowlist_rejected(self, tmp_path):
         """auto_accept + internal backend + no allowlist means unverified issuance."""
         with pytest.raises(ConfigValidationError, match="challenges.auto_accept"):

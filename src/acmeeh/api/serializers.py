@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from acmeeh.core.types import ChallengeType
+
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from uuid import UUID
 
     from acmeeh.config.settings import AcmeehSettings
@@ -17,6 +20,9 @@ if TYPE_CHECKING:
     from acmeeh.models.authorization import Authorization
     from acmeeh.models.challenge import Challenge
     from acmeeh.models.order import Order
+
+MAX_ISSUER_DOMAIN_NAMES = 10
+"""Upper bound on ``issuer-domain-names`` (draft-ietf-acme-dns-persist §4.3.1)."""
 
 
 def serialize_directory(
@@ -115,15 +121,29 @@ def serialize_authorization(
     authz: Authorization,
     challenges: list[Challenge],
     urls: AcmeUrls,
+    issuer_domain_names: Sequence[str] = (),
 ) -> dict:
-    """Serialize an ACME authorization resource (RFC 8555 §7.1.4)."""
+    """Serialize an ACME authorization resource (RFC 8555 §7.1.4).
+
+    ``issuer_domain_names`` is forwarded to DNS-PERSIST-01 challenges; see
+    :func:`serialize_challenge`.
+    """
+    account_uri = urls.account_url(authz.account_id)
     result: dict = {
         "status": authz.status.value,
         "identifier": {
             "type": authz.identifier_type.value,
             "value": authz.identifier_value,
         },
-        "challenges": [serialize_challenge(c, urls) for c in challenges],
+        "challenges": [
+            serialize_challenge(
+                c,
+                urls,
+                account_uri=account_uri,
+                issuer_domain_names=issuer_domain_names,
+            )
+            for c in challenges
+        ],
     }
 
     if authz.expires:
@@ -137,14 +157,31 @@ def serialize_authorization(
 def serialize_challenge(
     challenge: Challenge,
     urls: AcmeUrls,
+    account_uri: str | None = None,
+    issuer_domain_names: Sequence[str] = (),
 ) -> dict:
-    """Serialize an ACME challenge resource (RFC 8555 §7.1.5)."""
+    """Serialize an ACME challenge resource (RFC 8555 §7.1.5).
+
+    DNS-PERSIST-01 (draft-ietf-acme-dns-persist §4.3.1) has no token and no
+    key authorization; its object instead carries ``accounturi`` and
+    ``issuer-domain-names``, which together tell the client exactly what to
+    publish.  ``token`` is omitted for that type so clients cannot mistake
+    it for a DNS-01-style challenge.
+    """
     result: dict = {
         "type": challenge.type.value,
         "url": urls.challenge_url(challenge.id),
-        "token": challenge.token,
         "status": challenge.status.value,
     }
+
+    if challenge.type is ChallengeType.DNS_PERSIST_01:
+        if account_uri is not None:
+            result["accounturi"] = account_uri
+        # The draft caps the list at 10 and requires normalized names;
+        # normalization happens once at config load.
+        result["issuer-domain-names"] = list(issuer_domain_names)[:MAX_ISSUER_DOMAIN_NAMES]
+    else:
+        result["token"] = challenge.token
 
     if challenge.validated_at:
         result["validated"] = challenge.validated_at.isoformat()

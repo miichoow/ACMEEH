@@ -253,6 +253,36 @@ See the [CA backends documentation](docs/ca-backends.rst) for detailed setup ins
 | `http-01` | HTTP request to `http://{domain}/.well-known/acme-challenge/{token}` on port 80 |
 | `dns-01` | DNS TXT record query at `_acme-challenge.{domain}` |
 | `tls-alpn-01` | TLS connection to port 443 with ALPN protocol `acme-tls/1` |
+| `dns-persist-01` | Long-lived DNS TXT record at `_validation-persist.{domain}` ([draft-ietf-acme-dns-persist](https://datatracker.ietf.org/doc/draft-ietf-acme-dns-persist/)) |
+
+### DNS-PERSIST-01
+
+Unlike the other types, `dns-persist-01` has no per-challenge token. The subscriber publishes one long-lived TXT record that binds an Issuer Domain Name to their ACME account, and that record authorizes *future* issuance — so subsequent renewals need no DNS changes at all:
+
+```
+_validation-persist.example.com. IN TXT "ca.example; accounturi=https://acme.example/acct/1"
+```
+
+The record value uses the RFC 8659 `issue-value` syntax (the CAA record format). The challenge object omits `token` and instead carries `accounturi` and `issuer-domain-names`, telling the client exactly what to publish.
+
+Add `policy=wildcard` to authorize wildcards and subdomains:
+
+```
+_validation-persist.example.com. IN TXT "ca.example; accounturi=https://acme.example/acct/1; policy=wildcard"
+```
+
+This record authorizes `example.com` and `*.example.com`. Letting a record also authorize *subdomains* beneath it (e.g. one record on `example.com` covering `foo.example.com`) is off by default — opt in with `challenges.dnspersist01.allow_subdomain_policy: true`. An optional `persistUntil=<unix-timestamp>` parameter stops the record being used for new validations after a chosen time.
+
+Enable it by listing the type and configuring at least one Issuer Domain Name — the type stays inert until you do:
+
+```yaml
+challenges:
+  enabled: [http-01, dns-persist-01]
+  dnspersist01:
+    issuer_domain_names: [ca.example]
+```
+
+See [`docs/configuration.rst`](docs/configuration.rst) for the full option list.
 
 For the `acme_proxy` backend, set `challenges.auto_accept: true` to auto-accept all downstream challenges (real validation happens upstream).
 

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from acmeeh.app.errors import MALFORMED, UNAUTHORIZED, AcmeProblem
-from acmeeh.challenge.base import ChallengeError
+from acmeeh.challenge.base import ChallengeContext, ChallengeError
 from acmeeh.core.state import log_transition
 from acmeeh.core.types import (
     AuthorizationStatus,
@@ -56,6 +56,7 @@ class ChallengeService:
         rate_limiter=None,
         challenge_settings=None,
         notifier=None,
+        urls=None,
     ) -> None:
         self._challenges = challenge_repo
         self._authz = authz_repo
@@ -66,6 +67,9 @@ class ChallengeService:
         self._rate_limiter = rate_limiter
         self._challenge_settings = challenge_settings
         self._notifier = notifier
+        # Only needed to build the account URI that DNS-PERSIST-01 records
+        # bind to; validators that don't ask for context never see it.
+        self._urls = urls
 
     def initiate_validation(
         self,
@@ -149,6 +153,7 @@ class ChallengeService:
             jwk,
             authz.identifier_type.value,
             authz.identifier_value,
+            self._build_context(authz),
         )
 
     def process_pending(
@@ -216,6 +221,7 @@ class ChallengeService:
             jwk,
             authz.identifier_type.value,
             authz.identifier_value,
+            self._build_context(authz),
         )
 
     def expire_challenges(self) -> int:
@@ -307,6 +313,25 @@ class ChallengeService:
 
         return challenge, authz
 
+    def _build_context(self, authz: Authorization) -> ChallengeContext:
+        """Build the validator context for an authorization.
+
+        ``account_uri`` is left ``None`` when no URL builder was injected;
+        validators that require it fail with a clear error rather than
+        silently validating without an account binding.
+        """
+        account_uri = None
+        if self._urls is not None:
+            try:
+                account_uri = self._urls.account_url(authz.account_id)
+            except Exception:  # noqa: BLE001
+                log.exception("Failed to build account URI for %s", authz.account_id)
+
+        return ChallengeContext(
+            account_uri=account_uri,
+            is_wildcard=bool(authz.wildcard),
+        )
+
     def _run_validation(
         self,
         challenge: Challenge,
@@ -316,6 +341,7 @@ class ChallengeService:
         jwk: dict,
         identifier_type: str,
         identifier_value: str,
+        context: ChallengeContext | None = None,
     ) -> Challenge:
         """Execute validation with retry/hook logic.
 
@@ -335,6 +361,9 @@ class ChallengeService:
             The identifier type string (e.g. ``"dns"``).
         identifier_value:
             The identifier value (e.g. ``"example.com"``).
+        context:
+            Extra context (account URI, wildcard flag), passed only to
+            validators that set ``requires_context``.
 
         Returns
         -------
@@ -353,12 +382,19 @@ class ChallengeService:
         if self._hooks:
             self._hooks.dispatch("challenge.before_validate", ctx)
 
+        extra = (
+            {"context": context if context is not None else ChallengeContext()}
+            if getattr(validator, "requires_context", False)
+            else {}
+        )
+
         try:
             validator.validate(
                 token=challenge.token,
                 jwk=jwk,
                 identifier_type=identifier_type,
                 identifier_value=identifier_value,
+                **extra,
             )
 
             # Success

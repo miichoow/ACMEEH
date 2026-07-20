@@ -235,6 +235,27 @@
             "auto_validate":   { "type": "boolean", "default": true }
           }
         },
+        "dnspersist01": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "issuer_domain_names": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "maxItems": 10,
+              "default": []
+            },
+            "resolvers":        { "type": "array", "items": { "type": "string" }, "default": [] },
+            "timeout_seconds":  { "$ref": "#/$defs/positive_integer", "default": 30 },
+            "propagation_wait_seconds": { "$ref": "#/$defs/non_negative_integer", "default": 10 },
+            "max_retries":      { "$ref": "#/$defs/non_negative_integer", "default": 5 },
+            "auto_validate":    { "type": "boolean", "default": false },
+            "require_dnssec":   { "type": "boolean", "default": false },
+            "require_authoritative": { "type": "boolean", "default": false },
+            "allow_wildcard_policy":  { "type": "boolean", "default": true },
+            "allow_subdomain_policy": { "type": "boolean", "default": false }
+          }
+        },
         "auto_accept":   { "type": "boolean", "default": false },
         "retry_after_seconds": { "$ref": "#/$defs/positive_integer", "default": 3 },
         "backoff_base_seconds": { "$ref": "#/$defs/positive_integer", "default": 5 },

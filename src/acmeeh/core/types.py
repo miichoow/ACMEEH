@@ -79,6 +79,7 @@ class ChallengeType(StrEnum):
     HTTP_01 = "http-01"
     DNS_01 = "dns-01"
     TLS_ALPN_01 = "tls-alpn-01"
+    DNS_PERSIST_01 = "dns-persist-01"
 
 
 # ---------------------------------------------------------------------------

@@ -38,7 +38,12 @@ def get_authorization(authz_id):
             g.account.id,
         )
         challenges = container.challenges.find_by_authorization(authz_id)
-        body = serialize_authorization(authz, challenges, container.urls)
+        body = serialize_authorization(
+            authz,
+            challenges,
+            container.urls,
+            container.settings.challenges.dnspersist01.issuer_domain_names,
+        )
         return jsonify(body), 200
 
     # POST-as-GET: return current state
@@ -46,7 +51,12 @@ def get_authorization(authz_id):
         authz_id,
         g.account.id,
     )
-    body = serialize_authorization(authz, challenges, container.urls)
+    body = serialize_authorization(
+        authz,
+        challenges,
+        container.urls,
+        container.settings.challenges.dnspersist01.issuer_domain_names,
+    )
     response = jsonify(body)
     response.status_code = 200
 

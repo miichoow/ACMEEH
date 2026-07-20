@@ -383,6 +383,55 @@ Challenge Types
    * - ``tls-alpn-01``
      - TLS connection to port 443
      - Self-signed cert with acmeIdentifier extension, ALPN protocol ``acme-tls/1``
+   * - ``dns-persist-01``
+     - DNS TXT record query
+     - Long-lived TXT record at ``_validation-persist.{domain}`` — no token
+
+dns-persist-01
+""""""""""""""
+
+Defined by `draft-ietf-acme-dns-persist
+<https://datatracker.ietf.org/doc/draft-ietf-acme-dns-persist/>`_. This type has
+no token and no key authorization, so its challenge object differs from the
+others: ``token`` is **absent**, and two extra fields appear.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Field
+     - Description
+   * - ``accounturi``
+     - The requesting account's URL. Must appear verbatim in the published
+       record's ``accounturi`` parameter.
+   * - ``issuer-domain-names``
+     - Array of 1–10 Issuer Domain Names the CA answers to. The published
+       record must name one of them.
+
+Example challenge object:
+
+.. code-block:: json
+
+   {
+     "type": "dns-persist-01",
+     "url": "https://acme.example/chall/8f2b...",
+     "status": "pending",
+     "accounturi": "https://acme.example/acct/1",
+     "issuer-domain-names": ["ca.example"]
+   }
+
+The client publishes a TXT record in RFC 8659 ``issue-value`` syntax::
+
+    _validation-persist.example.com. IN TXT "ca.example; accounturi=https://acme.example/acct/1"
+
+Optional parameters: ``policy=wildcard`` (authorizes the wildcard form of the
+validated name; also authorizes subdomains beneath it if the server has
+``challenges.dnspersist01.allow_subdomain_policy`` enabled — off by default)
+and ``persistUntil=<unix-timestamp>`` (stops the record being used for new
+validations after that time).
+
+The record is not removed after validation — it authorizes future issuance, so
+renewals require no DNS changes.
 
 Certificate
 -----------

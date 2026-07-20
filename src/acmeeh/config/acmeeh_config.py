@@ -38,6 +38,7 @@ _KNOWN_CHALLENGE_TYPES = frozenset(
         "http-01",
         "dns-01",
         "tls-alpn-01",
+        "dns-persist-01",
     }
 )
 
@@ -347,6 +348,19 @@ class AcmeehConfig(ConfigKit):
                     f"Known types: {sorted(_KNOWN_CHALLENGE_TYPES)}. "
                     "Use 'ext:fully.qualified.Class' for custom validators.",
                 )
+
+        # DNS-PERSIST-01 matches published records against the CA's own
+        # Issuer Domain Names.  With none configured no record can ever
+        # match, so the type would be advertised but always fail.
+        if "dns-persist-01" in enabled_types and not (challenges.get("dnspersist01") or {}).get(
+            "issuer_domain_names"
+        ):
+            errors.append(
+                "challenges.enabled includes 'dns-persist-01' but "
+                "challenges.dnspersist01.issuer_domain_names is empty — every "
+                "validation of this type would fail, because no published "
+                "record could name this CA. Set at least one Issuer Domain Name.",
+            )
 
         if (
             challenges.get("auto_accept")

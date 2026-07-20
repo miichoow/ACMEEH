@@ -231,8 +231,11 @@ class AuthorizationService:
             # HTTP-01 not valid for wildcards or IP identifiers
             if ctype == ChallengeType.HTTP_01 and (is_wildcard or identifier_type == "ip"):
                 continue
-            # DNS-01 not valid for IP identifiers
-            if ctype == ChallengeType.DNS_01 and identifier_type == "ip":
+            # DNS-01 and DNS-PERSIST-01 not valid for IP identifiers
+            if (
+                ctype in (ChallengeType.DNS_01, ChallengeType.DNS_PERSIST_01)
+                and identifier_type == "ip"
+            ):
                 continue
 
             token = secrets.token_urlsafe(32)

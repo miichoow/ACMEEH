@@ -1,9 +1,16 @@
 _comment:
-- 'All three built-in challenge types enabled: http-01, dns-01,'
-- and tls-alpn-01. Each validator has its own tuning parameters.
+- 'All four built-in challenge types enabled: http-01, dns-01,'
+- tls-alpn-01 and dns-persist-01. Each validator has its own tuning
+- parameters.
 - ''
-- ACME clients will see all three in the authorization response
+- ACME clients will see all four in the authorization response
 - and can pick whichever they support.
+- ''
+- 'dns-persist-01 (draft-ietf-acme-dns-persist) is the odd one out: it'
+- has no token. The subscriber publishes one long-lived TXT record at
+- _validation-persist.<domain> that authorizes future issuance, so
+- renewals need no DNS changes. It stays inert until
+- issuer_domain_names is set.
 server:
   external_url: https://acme.corp.internal
   port: 8443
@@ -21,6 +28,7 @@ challenges:
   - http-01
   - dns-01
   - tls-alpn-01
+  - dns-persist-01
   backoff_base_seconds: 5
   backoff_max_seconds: 300
   retry_after_seconds: 3
@@ -42,6 +50,22 @@ challenges:
     port: 443
     timeout_seconds: 10
     auto_validate: true
+  dnspersist01:
+    # Required: a published record must name one of these, and clients
+    # see them in the challenge's issuer-domain-names field.
+    issuer_domain_names:
+    - acme.corp.internal
+    resolvers:
+    - 10.0.1.53
+    - 10.0.2.53
+    timeout_seconds: 30
+    max_retries: 5
+    auto_validate: false
+    # Honour policy=wildcard for wildcard identifiers.
+    allow_wildcard_policy: true
+    # Off by default: when on, a policy=wildcard record on example.com
+    # also authorizes any name beneath it.
+    allow_subdomain_policy: false
 logging:
   level: INFO
   format: json

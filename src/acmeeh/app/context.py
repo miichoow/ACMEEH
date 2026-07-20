@@ -310,6 +310,7 @@ class Container:
             hook_registry=self.hook_registry,
             challenge_settings=settings.challenges,
             notifier=self.notification_service,
+            urls=self.urls,
         )
 
         # Background challenge worker (optional)

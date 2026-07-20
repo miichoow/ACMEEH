@@ -36,6 +36,11 @@ _BUILTIN_VALIDATORS: dict[str, tuple[str, str, str | None]] = {
     "http-01": ("acmeeh.challenge.http01", "Http01Validator", "http01"),
     "dns-01": ("acmeeh.challenge.dns01", "Dns01Validator", "dns01"),
     "tls-alpn-01": ("acmeeh.challenge.tls_alpn01", "TlsAlpn01Validator", "tlsalpn01"),
+    "dns-persist-01": (
+        "acmeeh.challenge.dns_persist01",
+        "DnsPersist01Validator",
+        "dnspersist01",
+    ),
 }
 
 # Auto-accept counterparts for built-in validators, keyed by the same
@@ -44,6 +49,13 @@ _AUTO_ACCEPT_VALIDATORS: dict[str, tuple[str, str, str | None]] = {
     "http-01": ("acmeeh.challenge.auto_accept", "AutoAcceptHttpValidator", None),
     "dns-01": ("acmeeh.challenge.auto_accept", "AutoAcceptDnsValidator", None),
     "tls-alpn-01": ("acmeeh.challenge.auto_accept", "AutoAcceptTlsValidator", None),
+    # Keeps its per-type settings: the challenge object still has to
+    # advertise issuer-domain-names even when validation is auto-accepted.
+    "dns-persist-01": (
+        "acmeeh.challenge.auto_accept",
+        "AutoAcceptDnsPersistValidator",
+        "dnspersist01",
+    ),
 }
 
 

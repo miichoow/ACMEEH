@@ -42,7 +42,12 @@ def trigger_challenge(challenge_id):
             from acmeeh.app.errors import MALFORMED, AcmeProblem
 
             raise AcmeProblem(MALFORMED, "Challenge not found", status=404)
-        body = serialize_challenge(challenge, container.urls)
+        body = serialize_challenge(
+            challenge,
+            container.urls,
+            account_uri=container.urls.account_url(g.account.id),
+            issuer_domain_names=(container.settings.challenges.dnspersist01.issuer_domain_names),
+        )
         response = jsonify(body)
         response.status_code = 200
         # RFC 8555 §7.5.1: Link rel="up" to parent authorization
@@ -59,7 +64,12 @@ def trigger_challenge(challenge_id):
         g.jwk_dict,
     )
 
-    body = serialize_challenge(challenge, container.urls)
+    body = serialize_challenge(
+        challenge,
+        container.urls,
+        account_uri=container.urls.account_url(g.account.id),
+        issuer_domain_names=(container.settings.challenges.dnspersist01.issuer_domain_names),
+    )
     response = jsonify(body)
     response.status_code = 200
     response.headers["Link"] = (

@@ -8,12 +8,40 @@ from __future__ import annotations
 
 import abc
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from acmeeh.core.types import ChallengeType
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ChallengeContext:
+    """Extra request context for validators that need more than a token.
+
+    Most challenge types validate purely from the token, the account JWK and
+    the identifier.  DNS-PERSIST-01 (draft-ietf-acme-dns-persist) also has to
+    match the published record against the requesting account's URI and know
+    whether a wildcard is being requested, so validators that need this set
+    :attr:`ChallengeValidator.requires_context` and receive it as the
+    ``context`` keyword.
+
+    Parameters
+    ----------
+    account_uri:
+        The requesting account's ACME URL, or ``None`` when the server could
+        not construct one.
+    is_wildcard:
+        Whether the authorization was created for a wildcard identifier.  The
+        identifier value passed to :meth:`ChallengeValidator.validate` always
+        has the ``*.`` prefix stripped, so this is the only signal.
+
+    """
+
+    account_uri: str | None = None
+    is_wildcard: bool = False
 
 
 class ChallengeError(Exception):
@@ -55,6 +83,21 @@ class ChallengeValidator(abc.ABC):
     """Identifier types this validator can validate.
 
     For example: ``{"dns"}``, ``{"dns", "ip"}``.
+    """
+
+    requires_context: ClassVar[bool] = False
+    """Whether :meth:`validate` accepts a ``context`` keyword.
+
+    Left ``False`` by default so validators written against the original
+    four-argument signature — including third-party ``ext:`` validators —
+    keep working unchanged.
+    """
+
+    uses_token: ClassVar[bool] = True
+    """Whether this challenge type carries a token.
+
+    DNS-PERSIST-01 has no token and no key authorization, so its challenge
+    object omits the ``token`` field.
     """
 
     def __init__(self, settings: Any = None) -> None:  # noqa: ANN401
@@ -104,6 +147,11 @@ class ChallengeValidator(abc.ABC):
             ``"dns"`` or ``"ip"``.
         identifier_value:
             The domain name or IP address.
+
+        Notes
+        -----
+        Validators that set :attr:`requires_context` additionally receive a
+        ``context`` keyword holding a :class:`ChallengeContext`.
 
         """
 

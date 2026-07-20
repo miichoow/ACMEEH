@@ -54,7 +54,12 @@ def new_authz():
         id_type,
         id_value,
     )
-    body = serialize_authorization(authz, challenges, container.urls)
+    body = serialize_authorization(
+        authz,
+        challenges,
+        container.urls,
+        container.settings.challenges.dnspersist01.issuer_domain_names,
+    )
     response = jsonify(body)
     response.status_code = 201
     response.headers["Location"] = container.urls.authorization_url(authz.id)
