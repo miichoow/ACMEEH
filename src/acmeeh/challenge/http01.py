@@ -64,7 +64,9 @@ def _make_pinned_connection_classes(pinned_ips: dict[str, str]) -> tuple[type, t
                 super().connect()
                 return
             self.sock = socket.create_connection(  # type: ignore[attr-defined]
-                (ip, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
+                (ip, self.port),
+                self.timeout,
+                self.source_address,  # type: ignore[attr-defined]
             )
             if self._tunnel_host:  # type: ignore[attr-defined]
                 self._tunnel()  # type: ignore[attr-defined]
@@ -76,7 +78,9 @@ def _make_pinned_connection_classes(pinned_ips: dict[str, str]) -> tuple[type, t
                 super().connect()
                 return
             sock = socket.create_connection(
-                (ip, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
+                (ip, self.port),
+                self.timeout,
+                self.source_address,  # type: ignore[attr-defined]
             )
             if self._tunnel_host:  # type: ignore[attr-defined]
                 self.sock = sock  # type: ignore[attr-defined]
