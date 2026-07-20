@@ -348,6 +348,22 @@ class AcmeehConfig(ConfigKit):
                     "Use 'ext:fully.qualified.Class' for custom validators.",
                 )
 
+        if (
+            challenges.get("auto_accept")
+            and ca_backend == "internal"
+            and not (security.get("identifier_policy") or {}).get(
+                "enforce_account_allowlist",
+            )
+        ):
+            errors.append(
+                "challenges.auto_accept is true with ca.backend 'internal' and "
+                "security.identifier_policy.enforce_account_allowlist is false — "
+                "this would issue certificates for any identifier with no "
+                "domain validation at all. Enable "
+                "security.identifier_policy.enforce_account_allowlist, or use "
+                "a CA backend where auto-accept is safe (e.g. 'acme_proxy').",
+            )
+
         # -- Nonce --
         nonce_len = nonce.get("length", 32)
         if nonce_len < _MIN_NONCE_LENGTH:

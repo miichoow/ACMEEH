@@ -428,6 +428,58 @@ class TestChallengeValidation:
                 },
             )
 
+    def test_auto_accept_with_internal_backend_and_no_allowlist_rejected(self, tmp_path):
+        """auto_accept + internal backend + no allowlist means unverified issuance."""
+        with pytest.raises(ConfigValidationError, match="challenges.auto_accept"):
+            _make_config(
+                tmp_path,
+                {
+                    "ca": {"backend": "internal"},
+                    "challenges": {"auto_accept": True},
+                    "security": {
+                        "identifier_policy": {"enforce_account_allowlist": False},
+                    },
+                },
+            )
+
+    def test_auto_accept_with_internal_backend_and_allowlist_accepted(self, tmp_path):
+        """auto_accept + internal backend is fine when the account allowlist is enforced."""
+        config = _make_config(
+            tmp_path,
+            {
+                "ca": {"backend": "internal"},
+                "challenges": {"auto_accept": True},
+                "security": {
+                    "identifier_policy": {"enforce_account_allowlist": True},
+                },
+                "admin_api": {
+                    "enabled": True,
+                    "token_secret": "super-secret-key-1234",
+                    "initial_admin_email": "admin@example.com",
+                    "base_path": "/admin",
+                },
+            },
+        )
+        assert config.settings.challenges.auto_accept is True
+
+    def test_auto_accept_with_non_internal_backend_accepted(self, tmp_path):
+        """auto_accept without the internal backend is the intended acme_proxy use case."""
+        config = _make_config(
+            tmp_path,
+            {
+                "ca": {
+                    "backend": "acme_proxy",
+                    "acme_proxy": {
+                        "directory_url": "https://acme.upstream.example/directory",
+                        "email": "admin@example.com",
+                        "challenge_handler": "callback_dns",
+                    },
+                },
+                "challenges": {"auto_accept": True},
+            },
+        )
+        assert config.settings.challenges.auto_accept is True
+
 
 class TestServerValidation:
     """Test server config validation."""
