@@ -366,6 +366,10 @@ class OrderService:
 
         authz_ids = []
         pending_challenges: list[Challenge] = []
+        # An order is READY only once every authorization is valid.  Track
+        # that here: a reused authorization is already valid, a freshly
+        # created one is only valid under auto_accept.
+        all_authzs_valid = True
         for ident in parsed:
             is_wildcard = ident.type == IdentifierType.DNS and ident.value.startswith(
                 _WILDCARD_PREFIX
@@ -385,7 +389,12 @@ class OrderService:
                     reusable.id,
                 )
                 authz_ids.append(reusable.id)
+                if reusable.status != AuthorizationStatus.VALID:
+                    all_authzs_valid = False
                 continue
+
+            if not auto_accept:
+                all_authzs_valid = False
 
             # Create new authorization
             authz_id = uuid4()
@@ -429,10 +438,13 @@ class OrderService:
                 for challenge in pending_challenges:
                     self._challenges.create(challenge)
 
-        # When auto_accept is on, all authzs are VALID (reused ones are
-        # always VALID, new ones were created as VALID above) so the
-        # order can transition directly to READY.
-        if auto_accept:
+        # RFC 8555 §7.1.6: an order is READY once every authorization is
+        # valid.  That happens either under auto_accept, or when all of the
+        # identifiers reused an authorization that is still valid — the
+        # renewal case.  Without this the renewal order has no challenge
+        # left to run, so nothing would ever move it out of PENDING and
+        # finalize would fail with orderNotReady forever.
+        if parsed and all_authzs_valid:
             self._orders.transition_status(
                 order_id,
                 OrderStatus.PENDING,
@@ -440,7 +452,7 @@ class OrderService:
             )
             order = replace(order, status=OrderStatus.READY)
             log.info(
-                "Auto-accept: order %s immediately READY (all authzs pre-validated)",
+                "Order %s immediately READY (all authorizations already valid)",
                 order_id,
             )
 
@@ -760,8 +772,11 @@ class OrderService:
             if is_wildcard or identifier.type == IdentifierType.IP:
                 return False
         # TLS-ALPN-01 supports both DNS and IP
-        # DNS-01 supports DNS only
-        return not (ctype == ChallengeType.DNS_01 and identifier.type == IdentifierType.IP)
+        # DNS-01 and DNS-PERSIST-01 support DNS only (including wildcards)
+        return not (
+            ctype in (ChallengeType.DNS_01, ChallengeType.DNS_PERSIST_01)
+            and identifier.type == IdentifierType.IP
+        )
 
     @staticmethod
     def _compute_hash(identifiers: list[Identifier]) -> str:

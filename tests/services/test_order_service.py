@@ -419,3 +419,116 @@ class TestParseOptionalDatetime:
     def test_invalid_format(self):
         with pytest.raises(AcmeProblem, match="Invalid datetime"):
             _parse_optional_datetime("not-a-date")
+
+
+# ---------------------------------------------------------------------------
+# TestOrderReadyWhenAuthorizationsAlreadyValid
+# ---------------------------------------------------------------------------
+
+
+class TestOrderReadyWhenAuthorizationsAlreadyValid:
+    """An order is READY once every authorization is valid (RFC 8555 §7.1.6).
+
+    Reusing still-valid authorizations is the renewal path: no challenge is
+    left to run, so nothing else would ever move the order out of PENDING and
+    finalize would fail with orderNotReady forever.
+    """
+
+    @staticmethod
+    def _authz(status):
+        from acmeeh.core.types import AuthorizationStatus
+        from acmeeh.models.authorization import Authorization
+
+        return Authorization(
+            id=uuid4(),
+            account_id=uuid4(),
+            identifier_type=IdentifierType.DNS,
+            identifier_value="example.com",
+            status=AuthorizationStatus(status),
+            wildcard=False,
+        )
+
+    def _create(self, reusable, *, auto_accept=False, identifiers=None):
+        from datetime import UTC, datetime, timedelta
+
+        from acmeeh.core.types import OrderStatus
+
+        orders = MagicMock()
+        orders.find_pending_for_dedup.return_value = None
+        authz_repo = MagicMock()
+        authz_repo.find_reusable.return_value = reusable
+
+        service = _make_service(order_repo=orders, authz_repo=authz_repo)
+        now = datetime.now(UTC)
+        order, _ = service._create_order_atomic(  # noqa: SLF001
+            account_id=uuid4(),
+            parsed=identifiers or [Identifier(type=IdentifierType.DNS, value="example.com")],
+            id_hash="hash",
+            expires=now + timedelta(hours=1),
+            authz_expires=now + timedelta(days=30),
+            nb=None,
+            na=None,
+            enabled_types=[ChallengeType.HTTP_01],
+            auto_accept=auto_accept,
+        )
+        return order, orders, OrderStatus
+
+    def test_reused_valid_authorization_makes_order_ready(self):
+        order, orders, OrderStatus = self._create(self._authz("valid"))
+        assert order.status == OrderStatus.READY
+        orders.transition_status.assert_called_once()
+
+    def test_new_authorization_leaves_order_pending(self):
+        order, orders, OrderStatus = self._create(None)
+        assert order.status == OrderStatus.PENDING
+        orders.transition_status.assert_not_called()
+
+    def test_reused_pending_authorization_leaves_order_pending(self):
+        order, _, OrderStatus = self._create(self._authz("pending"))
+        assert order.status == OrderStatus.PENDING
+
+    def test_auto_accept_still_makes_order_ready(self):
+        order, _, OrderStatus = self._create(None, auto_accept=True)
+        assert order.status == OrderStatus.READY
+
+    def test_one_unvalidated_identifier_keeps_order_pending(self):
+        """A multi-SAN order is only ready when every name is authorized."""
+        from acmeeh.core.types import AuthorizationStatus
+        from acmeeh.models.authorization import Authorization
+
+        valid = self._authz("valid")
+        pending = Authorization(
+            id=uuid4(),
+            account_id=valid.account_id,
+            identifier_type=IdentifierType.DNS,
+            identifier_value="other.example.com",
+            status=AuthorizationStatus.PENDING,
+            wildcard=False,
+        )
+
+        orders = MagicMock()
+        orders.find_pending_for_dedup.return_value = None
+        authz_repo = MagicMock()
+        authz_repo.find_reusable.side_effect = [valid, pending]
+
+        from datetime import UTC, datetime, timedelta
+
+        from acmeeh.core.types import OrderStatus
+
+        service = _make_service(order_repo=orders, authz_repo=authz_repo)
+        now = datetime.now(UTC)
+        order, _ = service._create_order_atomic(  # noqa: SLF001
+            account_id=uuid4(),
+            parsed=[
+                Identifier(type=IdentifierType.DNS, value="example.com"),
+                Identifier(type=IdentifierType.DNS, value="other.example.com"),
+            ],
+            id_hash="hash",
+            expires=now + timedelta(hours=1),
+            authz_expires=now + timedelta(days=30),
+            nb=None,
+            na=None,
+            enabled_types=[ChallengeType.HTTP_01],
+            auto_accept=False,
+        )
+        assert order.status == OrderStatus.PENDING
