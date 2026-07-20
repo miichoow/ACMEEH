@@ -234,6 +234,7 @@ def create_token(
             "user_id": str(user.id),
             "username": user.username,
             "role": user.role.value,
+            "iat": time.time(),
         }
     )
 
@@ -317,6 +318,21 @@ def require_admin_auth(
                 ADMIN_UNAUTHORIZED,
                 "Account disabled or not found",
                 status=401,
+            )
+
+        issued_at = payload.get("iat", 0)
+        changed_at = user.password_changed_at
+        changed_at_ts = (
+            changed_at.timestamp()
+            if changed_at.tzinfo is not None
+            else changed_at.replace(tzinfo=UTC).timestamp()
+        )
+        if issued_at < changed_at_ts:
+            raise AcmeProblem(
+                ADMIN_UNAUTHORIZED,
+                "Token invalidated by password change",
+                status=401,
+                headers={"WWW-Authenticate": "Bearer"},
             )
 
         g.admin_user = user

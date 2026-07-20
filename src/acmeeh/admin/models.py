@@ -25,6 +25,7 @@ class AdminUser:
     created_at: datetime = _EPOCH
     updated_at: datetime = _EPOCH
     last_login_at: datetime | None = None
+    password_changed_at: datetime = _EPOCH
 
 
 @dataclass(frozen=True)

@@ -649,3 +649,29 @@ CREATE INDEX IF NOT EXISTS idx_accounts_eab_credential
 INSERT INTO schema_migrations (version)
 VALUES ('010_account_eab_link')
 ON CONFLICT (version) DO NOTHING;
+
+-- =========================================================================
+-- Admin password-change timestamp
+-- =========================================================================
+-- Admin bearer tokens are stateless (itsdangerous), so a password reset
+-- previously left any already-issued token for that user valid until it
+-- expired. Stamping the password-change time lets ``require_admin_auth``
+-- reject tokens issued before the most recent password change.
+-- =========================================================================
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'admin'
+          AND table_name = 'users'
+          AND column_name = 'password_changed_at'
+    ) THEN
+        ALTER TABLE admin.users
+            ADD COLUMN password_changed_at TIMESTAMPTZ NOT NULL DEFAULT now();
+    END IF;
+END;
+$$;
+
+INSERT INTO schema_migrations (version)
+VALUES ('011_admin_password_changed_at')
+ON CONFLICT (version) DO NOTHING;

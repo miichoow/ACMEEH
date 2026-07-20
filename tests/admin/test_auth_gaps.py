@@ -6,6 +6,7 @@ Covers: LoginRateLimiter, require_admin_auth, require_role, get_login_limiter.
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
@@ -425,6 +426,56 @@ class TestRequireAdminAuth:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["user"] == str(admin_user.id)
+
+    def test_token_issued_before_password_reset_is_rejected(
+        self,
+        client,
+        valid_token,
+        user_repo,
+        admin_user,
+    ):
+        """A password reset must invalidate tokens issued before it."""
+        # Simulate the DB row after `reset_password` bumped
+        # password_changed_at to a point after this token's iat.
+        reset_user = _make_admin_user(user_id=admin_user.id)
+        reset_user = reset_user.__class__(
+            **{
+                **reset_user.__dict__,
+                "password_changed_at": datetime.now(UTC) + timedelta(seconds=60),
+            }
+        )
+        user_repo.find_by_id.return_value = reset_user
+
+        resp = client.get(
+            "/protected",
+            headers={"Authorization": f"Bearer {valid_token}"},
+        )
+        assert resp.status_code == 401
+        data = resp.get_json()
+        assert "Token invalidated by password change" in data["detail"]
+
+    def test_token_issued_after_password_reset_succeeds(
+        self,
+        client,
+        user_repo,
+        admin_user,
+    ):
+        """A token created after the reset (with a fresh iat) stays valid."""
+        reset_user = _make_admin_user(user_id=admin_user.id)
+        reset_user = reset_user.__class__(
+            **{
+                **reset_user.__dict__,
+                "password_changed_at": datetime.now(UTC) - timedelta(seconds=60),
+            }
+        )
+        user_repo.find_by_id.return_value = reset_user
+        token = create_token(reset_user, TOKEN_SECRET, TOKEN_EXPIRY)
+
+        resp = client.get(
+            "/protected",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
 
 
 # ===========================================================================

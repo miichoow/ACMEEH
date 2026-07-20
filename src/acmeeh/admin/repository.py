@@ -36,6 +36,7 @@ class AdminUserRepository(BaseRepository[AdminUser]):
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             last_login_at=row.get("last_login_at"),
+            password_changed_at=row["password_changed_at"],
         )
 
     def _entity_to_row(self, entity: AdminUser) -> dict:
@@ -56,7 +57,9 @@ class AdminUserRepository(BaseRepository[AdminUser]):
         """Update a user's password hash."""
         db = Database.get_instance()
         row = db.fetch_one(
-            "UPDATE admin.users SET password_hash = %s WHERE id = %s RETURNING *",
+            "UPDATE admin.users "
+            "SET password_hash = %s, password_changed_at = now() "
+            "WHERE id = %s RETURNING *",
             (password_hash, user_id),
             as_dict=True,
         )
