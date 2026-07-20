@@ -7,6 +7,7 @@ and comparing the response body against the computed key authorization.
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import logging
 import secrets
@@ -40,6 +41,51 @@ class _RebindingCheckedRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
         self._check_url(newurl)
         return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _make_pinned_connection_classes(pinned_ips: dict[str, str]) -> tuple[type, type]:
+    """Build HTTPConnection/HTTPSConnection subclasses that connect to a
+    pre-validated IP instead of re-resolving the hostname.
+
+    Without this, the blocklist check and the actual TCP connection each do
+    their own independent DNS lookup (the check via ``getaddrinfo`` in
+    ``check_host_allowed``, the connection via ``socket.create_connection``
+    inside ``http.client``). A resolver under the attacker's control can
+    answer those two lookups differently (e.g. TTL 0 / alternating answers),
+    passing the blocklist check and then rebinding to an internal address for
+    the real request. Pinning the socket to the exact IP that was checked
+    closes that TOCTOU gap.
+    """
+
+    class _PinnedHTTPConnection(http.client.HTTPConnection):
+        def connect(self) -> None:
+            ip = pinned_ips.get(self.host)
+            if ip is None:
+                super().connect()
+                return
+            self.sock = socket.create_connection(  # type: ignore[attr-defined]
+                (ip, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
+            )
+            if self._tunnel_host:  # type: ignore[attr-defined]
+                self._tunnel()  # type: ignore[attr-defined]
+
+    class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+        def connect(self) -> None:
+            ip = pinned_ips.get(self.host)
+            if ip is None:
+                super().connect()
+                return
+            sock = socket.create_connection(
+                (ip, self.port), self.timeout, self.source_address  # type: ignore[attr-defined]
+            )
+            if self._tunnel_host:  # type: ignore[attr-defined]
+                self.sock = sock  # type: ignore[attr-defined]
+                self._tunnel()  # type: ignore[attr-defined]
+            self.sock = self._context.wrap_socket(  # type: ignore[attr-defined]
+                sock, server_hostname=self.host
+            )
+
+    return _PinnedHTTPConnection, _PinnedHTTPSConnection
 
 
 class Http01Validator(ChallengeValidator):
@@ -108,6 +154,11 @@ class Http01Validator(ChallengeValidator):
             except ValueError:
                 log.warning("Ignoring unparseable blocked_network: %s", cidr)
 
+        # Maps hostname -> the single IP that was validated for it, so the
+        # actual connection (via the pinned connection classes below) is
+        # forced onto that exact address instead of re-resolving the host.
+        pinned_ips: dict[str, str] = {}
+
         def check_host_allowed(host: str, host_port: int) -> None:
             if not blocked_nets:
                 return
@@ -151,6 +202,11 @@ class Http01Validator(ChallengeValidator):
                 host,
                 sorted(allowed_ips),
             )
+            # Pin to one specific validated IP so the connection that is
+            # actually made can't be routed to a different (possibly
+            # blocked) address by a resolver that answers differently on
+            # the next lookup.
+            pinned_ips[host] = str(sorted(allowed_ips)[0])
 
         def check_redirect_url(redirect_url: str) -> None:
             parts = urlsplit(redirect_url)
@@ -170,8 +226,31 @@ class Http01Validator(ChallengeValidator):
 
         check_host_allowed(identifier_value, port)
 
-        # Step 3: HTTP GET, re-checking the blocklist on every redirect hop
-        opener = urllib.request.build_opener(_RebindingCheckedRedirectHandler(check_redirect_url))
+        # Step 3: HTTP GET, re-checking the blocklist on every redirect hop.
+        # The HTTP(S) handlers use pinned connection classes so the socket
+        # connects to the exact IP that was just validated, rather than
+        # letting http.client re-resolve the hostname itself.
+        handlers: list[urllib.request.BaseHandler] = [
+            _RebindingCheckedRedirectHandler(check_redirect_url)
+        ]
+        if blocked_nets:
+            pinned_http_cls, pinned_https_cls = _make_pinned_connection_classes(pinned_ips)
+
+            class _PinnedHTTPHandler(urllib.request.HTTPHandler):
+                def http_open(self, req):  # type: ignore[no-untyped-def]
+                    return self.do_open(pinned_http_cls, req)  # type: ignore[arg-type]
+
+            class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+                def https_open(self, req):  # type: ignore[no-untyped-def]
+                    return self.do_open(
+                        pinned_https_cls,  # type: ignore[arg-type]
+                        req,
+                        context=self._context,  # type: ignore[attr-defined]
+                    )
+
+            handlers.append(_PinnedHTTPHandler())
+            handlers.append(_PinnedHTTPSHandler())
+        opener = urllib.request.build_opener(*handlers)
         try:
             req = urllib.request.Request(url, method="GET")
             resp = opener.open(req, timeout=timeout)

@@ -146,17 +146,18 @@ class TestHttp01BlockedNetworks:
         )
         validator = Http01Validator(settings=settings)
 
-        # Mock getaddrinfo to return public IP, and urlopen to simulate
-        # a failed connection (we only test the rebinding check passes)
+        # Mock getaddrinfo to return public IP, and the request opener to
+        # simulate a failed connection (we only test the rebinding check
+        # passes)
         mock_addrinfo = [
             (2, 1, 6, "", ("93.184.216.34", 80)),
         ]
         with patch("acmeeh.challenge.http01.socket.getaddrinfo", return_value=mock_addrinfo):
-            with patch("acmeeh.challenge.http01.urllib.request.urlopen") as mock_urlopen:
+            with patch("acmeeh.challenge.http01.urllib.request.build_opener") as mock_build_opener:
                 mock_resp = MagicMock()
                 mock_resp.status = 200
                 mock_resp.read.return_value = b"not-a-real-token"
-                mock_urlopen.return_value = mock_resp
+                mock_build_opener.return_value.open.return_value = mock_resp
                 # This won't match the key_authorization so it will raise
                 # ChallengeError about body not matching — but NOT about
                 # blocked networks, which is what we're testing.
@@ -169,6 +170,69 @@ class TestHttp01BlockedNetworks:
                         identifier_type="dns",
                         identifier_value="example.com",
                     )
+
+    def test_validator_pins_checked_ip_against_dns_rebinding(self):
+        """The IP validated by the blocklist check must be the exact IP the
+        real connection is made to — not a second, independent DNS lookup.
+
+        Without pinning, a resolver that answers ``getaddrinfo`` differently
+        between the pre-request blocklist check and the connection made by
+        ``http.client`` (TTL 0, alternating answers, etc.) can pass the check
+        with a public IP and then rebind the actual connection to a blocked
+        address.
+        """
+        from acmeeh.challenge.http01 import Http01Validator
+        from acmeeh.config.settings import Http01Settings
+
+        settings = Http01Settings(
+            port=80,
+            timeout_seconds=10,
+            max_retries=3,
+            auto_validate=True,
+            blocked_networks=("127.0.0.0/8",),
+            max_response_bytes=1048576,
+        )
+        validator = Http01Validator(settings=settings)
+
+        # The blocklist-check lookup returns a public IP (allowed), but a
+        # *second* lookup (as would happen inside http.client.connect()
+        # without pinning) would return loopback (blocked). If the real
+        # connection is properly pinned to the checked IP, this second
+        # value must never be consulted for connecting.
+        rebinding_addrinfo = iter(
+            [
+                [(2, 1, 6, "", ("93.184.216.34", 80))],  # check_host_allowed
+                [(2, 1, 6, "", ("127.0.0.1", 80))],  # would-be rebind target
+            ]
+        )
+
+        connected_addresses = []
+
+        def fake_create_connection(address, *args, **kwargs):
+            connected_addresses.append(address[0])
+            raise OSError("simulated connection failure (test stub)")
+
+        with (
+            patch(
+                "acmeeh.challenge.http01.socket.getaddrinfo",
+                side_effect=lambda *a, **k: next(rebinding_addrinfo),
+            ),
+            patch(
+                "acmeeh.challenge.http01.socket.create_connection",
+                side_effect=fake_create_connection,
+            ),
+        ):
+            from acmeeh.challenge.base import ChallengeError
+
+            with pytest.raises(ChallengeError, match="could not connect"):
+                validator.validate(
+                    token="test-token",
+                    jwk={"kty": "EC", "crv": "P-256", "x": "dGVzdA", "y": "dGVzdA"},
+                    identifier_type="dns",
+                    identifier_value="example.com",
+                )
+
+        assert connected_addresses == ["93.184.216.34"]
 
 
 # ===========================================================================
