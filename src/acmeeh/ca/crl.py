@@ -105,6 +105,11 @@ class CRLManager:
                 self._cached_at = time.monotonic()
                 return self._cached_crl
 
+        # Wall-clock time, taken before querying revocations: it is later
+        # fed to fromtimestamp() and compared with DB revoked_at values, and
+        # a revocation landing during the build must not be skipped.
+        check_started_at = time.time()
+
         # In HA mode, try to read from shared DB cache first
         if self._db is not None:
             db_crl = self._read_db_cache()
@@ -130,7 +135,7 @@ class CRLManager:
             if new_revocations == 0:
                 # No new revocations -- extend cache lifetime
                 self._cached_at = time.monotonic()
-                self._last_revocation_check = time.monotonic()
+                self._last_revocation_check = check_started_at
                 return self._cached_crl
 
         crl_bytes = self._build_with_shutdown_tracking()
@@ -141,7 +146,7 @@ class CRLManager:
 
         self._cached_crl = crl_bytes
         self._cached_at = time.monotonic()
-        self._last_revocation_check = time.monotonic()
+        self._last_revocation_check = check_started_at
         self._last_rebuild_error = None
         return crl_bytes
 

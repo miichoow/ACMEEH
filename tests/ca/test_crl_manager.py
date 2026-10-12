@@ -305,7 +305,7 @@ class TestGetCrlLocked:
         """Scenario 8: no new revocations -> cache extended, no rebuild."""
         manager._cached_crl = b"existing-crl"
         manager._cached_at = time.monotonic() - 5000
-        manager._last_revocation_check = time.monotonic() - 100
+        manager._last_revocation_check = time.time() - 100
         cert_repo.count_revoked_since.return_value = 0
 
         result = manager._get_crl_locked()
@@ -319,7 +319,7 @@ class TestGetCrlLocked:
         """Scenario 9: new revocations detected -> full rebuild."""
         manager._cached_crl = b"old-crl"
         manager._cached_at = time.monotonic() - 5000
-        manager._last_revocation_check = time.monotonic() - 100
+        manager._last_revocation_check = time.time() - 100
         cert_repo.count_revoked_since.return_value = 3
 
         p1, p2 = _patch_builders()
@@ -369,6 +369,29 @@ class TestGetCrlLocked:
             assert result is not None
             cert_repo.find_revoked.assert_called_once()
             assert manager._last_rebuild_error is None
+
+    def test_revocation_check_timestamp_is_wall_clock(self, manager, cert_repo):
+        """The stored check time must be epoch-based, not time.monotonic().
+
+        It is fed to datetime.fromtimestamp() and compared with DB
+        revoked_at values; a monotonic value maps to ~1970 and makes every
+        past revocation look new, forcing a rebuild on each cycle.
+        """
+        manager._cached_crl = b"existing"
+        manager._cached_at = time.monotonic() - 5000
+        cert_repo.count_revoked_since.return_value = 0
+
+        before = time.time()
+        manager._get_crl_locked()
+        after = time.time()
+
+        assert before <= manager._last_revocation_check <= after
+
+        # Second cycle: threshold passed to the repo is recent, not 1970.
+        manager._cached_at = time.monotonic() - 5000
+        manager._get_crl_locked()
+        since = cert_repo.count_revoked_since.call_args[0][0]
+        assert since.year >= 2024
 
     def test_incremental_check_uses_datetime_min_when_no_prior_check(
         self,
