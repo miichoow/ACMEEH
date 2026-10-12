@@ -12,6 +12,7 @@ from acmeeh.db.init import (
     _has_pool_internals,
     _reset_pool_after_fork,
     advisory_lock,
+    close_pool,
     get_pool_health,
     init_database,
     is_pool_healthy,
@@ -451,6 +452,61 @@ class TestResetPoolAfterFork:
 
         _reset_pool_after_fork(pool)
         pool.open.assert_called_once()
+
+
+# ======================================================================
+# close_pool
+# ======================================================================
+
+
+class TestClosePool:
+    @patch("acmeeh.db.init.Database")
+    def test_not_initialized(self, MockDB):
+        MockDB.is_initialized.return_value = False
+        close_pool()
+        MockDB.get_instance.assert_not_called()
+
+    @patch("acmeeh.db.init._get_raw_pool")
+    @patch("acmeeh.db.init.Database")
+    def test_closes_raw_pool_with_timeout(self, MockDB, mock_get):
+        MockDB.is_initialized.return_value = True
+        pool = MagicMock()
+        pool._closed = False
+        mock_get.return_value = pool
+
+        close_pool(timeout=3.0)
+
+        pool.close.assert_called_once_with(timeout=3.0)
+
+    @patch("acmeeh.db.init._get_raw_pool")
+    @patch("acmeeh.db.init.Database")
+    def test_already_closed_is_noop(self, MockDB, mock_get):
+        MockDB.is_initialized.return_value = True
+        pool = MagicMock()
+        pool._closed = True
+        mock_get.return_value = pool
+
+        close_pool()
+
+        pool.close.assert_not_called()
+
+    @patch("acmeeh.db.init._get_raw_pool")
+    @patch("acmeeh.db.init.Database")
+    def test_no_pool(self, MockDB, mock_get):
+        MockDB.is_initialized.return_value = True
+        mock_get.return_value = None
+        close_pool()  # should not raise
+
+    @patch("acmeeh.db.init._get_raw_pool")
+    @patch("acmeeh.db.init.Database")
+    def test_close_error_is_swallowed(self, MockDB, mock_get):
+        MockDB.is_initialized.return_value = True
+        pool = MagicMock()
+        pool._closed = False
+        pool.close.side_effect = RuntimeError("boom")
+        mock_get.return_value = pool
+
+        close_pool()  # should not raise
 
 
 # ======================================================================

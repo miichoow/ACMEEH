@@ -204,6 +204,33 @@ class TestRunGunicornSuccess:
 
         assert captured_cfg["bind"] == "127.0.0.1:9999"
 
+    def test_worker_exit_hook_stops_workers_then_closes_pool(self):
+        """worker_exit stops background workers before closing the DB pool."""
+        FakeBase = self._make_fake_base_application()
+        captured_cfg = {}
+
+        def capturing_run(self):
+            captured_cfg.update(self.cfg.settings)
+
+        FakeBase.run = capturing_run
+        fake_modules = self._install_fake_gunicorn(FakeBase)
+
+        from acmeeh.server.gunicorn_app import run_gunicorn
+
+        app = MagicMock()
+        with patch.dict(sys.modules, fake_modules):
+            run_gunicorn(app, _make_settings())
+
+        calls = MagicMock()
+        with (
+            patch("acmeeh.app.factory.stop_workers", calls.stop_workers),
+            patch("acmeeh.db.close_pool", calls.close_pool),
+        ):
+            captured_cfg["worker_exit"](MagicMock(), MagicMock())
+
+        assert [c[0] for c in calls.mock_calls] == ["stop_workers", "close_pool"]
+        calls.stop_workers.assert_called_once_with(app)
+
     def test_worker_settings_propagated(self):
         """Workers, worker_class, and timeout are forwarded to gunicorn cfg."""
         FakeBase = self._make_fake_base_application()

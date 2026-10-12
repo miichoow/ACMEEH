@@ -7,6 +7,7 @@ Public API::
 
 from acmeeh.db.init import (
     advisory_lock,
+    close_pool,
     get_pool_health,
     init_database,
     is_pool_healthy,
@@ -18,6 +19,7 @@ from acmeeh.db.unit_of_work import UnitOfWork
 __all__ = [
     "UnitOfWork",
     "advisory_lock",
+    "close_pool",
     "get_pool_health",
     "init_database",
     "is_pool_healthy",

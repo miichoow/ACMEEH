@@ -86,6 +86,20 @@ def run_gunicorn(app: Flask, settings: ServerSettings) -> None:
 
         start_workers(flask_app)
 
+    def _worker_exit(server, worker) -> None:  # noqa: ANN001, ARG001
+        """Stop background workers, then close the DB pool, on worker exit.
+
+        Runs in the worker process while the gevent hub is still alive, so
+        psycopg_pool can stop and join its own threads.  Without this they
+        are still blocked in ``q.get()`` at interpreter teardown and die
+        with ``_queue.Empty`` / ``KeyError`` tracebacks.
+        """
+        from acmeeh.app.factory import stop_workers  # noqa: PLC0415
+        from acmeeh.db import close_pool  # noqa: PLC0415
+
+        stop_workers(flask_app)
+        close_pool()
+
     class _App(BaseApplication):
         def __init__(self, flask_app: Flask, server: ServerSettings) -> None:
             self.application = flask_app
@@ -108,6 +122,7 @@ def run_gunicorn(app: Flask, settings: ServerSettings) -> None:
             self.cfg.set("accesslog", None)
             # Start background workers after fork so threads survive
             self.cfg.set("post_fork", _post_fork)
+            self.cfg.set("worker_exit", _worker_exit)
 
         def load(self) -> Flask:
             return self.application

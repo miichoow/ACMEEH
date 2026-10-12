@@ -511,6 +511,32 @@ def start_workers(app: Flask) -> None:
     atexit.register(container.expiration_worker.stop)
 
 
+def stop_workers(app: Flask) -> None:
+    """Stop the background worker threads started by :func:`start_workers`.
+
+    Call this from gunicorn's ``worker_exit`` hook, before closing the DB
+    pool, so no worker is mid-query on a closing pool.  Idempotent: the
+    ``atexit`` handlers registered by :func:`start_workers` call the same
+    ``stop()`` methods again later, which is harmless.
+    """
+    container = app.extensions.get("container")
+    if container is None:
+        return
+
+    workers = (
+        container.challenge_worker,
+        container.cleanup_worker,
+        container.expiration_worker,
+    )
+    for worker in workers:
+        if worker is None:
+            continue
+        try:
+            worker.stop()
+        except Exception:  # noqa: BLE001
+            log.exception("Failed to stop %s", type(worker).__name__)
+
+
 # ---------------------------------------------------------------------------
 # Infrastructure endpoints
 # ---------------------------------------------------------------------------

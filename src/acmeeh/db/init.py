@@ -309,6 +309,31 @@ def reinit_pool_after_fork() -> None:
     _reset_pool_after_fork(raw_pool)
 
 
+def close_pool(timeout: float = 5.0) -> None:
+    """Close the connection pool and join its worker threads.
+
+    Meant for gunicorn's ``worker_exit`` hook, while the event loop (gevent
+    hub) is still alive: psycopg_pool then stops its worker threads with
+    ``StopWorker`` tasks instead of leaving them blocked in ``q.get()``
+    until interpreter teardown kills them.  Safe to call more than once
+    and never raises.
+    """
+    if not Database.is_initialized():
+        return
+
+    raw_pool = _get_raw_pool(Database.get_instance())
+    if raw_pool is None or not callable(getattr(raw_pool, "close", None)):
+        return
+    if getattr(raw_pool, "_closed", False):
+        return
+
+    try:
+        raw_pool.close(timeout=timeout)
+        log.info("Connection pool closed (pid=%d)", os.getpid())
+    except Exception:  # noqa: BLE001
+        log.exception("Failed to close connection pool (pid=%d)", os.getpid())
+
+
 def _has_pool_internals(pool: Any) -> bool:
     """Return ``True`` when *pool* exposes the internal attributes we need."""
     required = ("_pool", "_nconns", "_closed", "_opened", "_workers", "open")

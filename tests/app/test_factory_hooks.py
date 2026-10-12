@@ -58,6 +58,27 @@ class TestFactoryAtexitRegistration:
         assert mock_container.cleanup_worker.stop in registered_callables
         assert mock_container.expiration_worker.stop in registered_callables
 
+    def test_stop_workers_stops_all_and_survives_errors(self):
+        from acmeeh.app.factory import stop_workers
+
+        container = MagicMock()
+        container.challenge_worker = None
+        container.cleanup_worker.stop.side_effect = RuntimeError("boom")
+        app = MagicMock()
+        app.extensions = {"container": container}
+
+        stop_workers(app)  # must not raise
+
+        container.cleanup_worker.stop.assert_called_once()
+        container.expiration_worker.stop.assert_called_once()
+
+    def test_stop_workers_without_container(self):
+        from acmeeh.app.factory import stop_workers
+
+        app = MagicMock()
+        app.extensions = {}
+        stop_workers(app)  # should return quietly
+
     def test_shutdown_coordinator_atexit_without_database(self, tmp_config_file):
         """Shutdown coordinator is always registered, even without a database."""
         AcmeehConfig(config_file=tmp_config_file, schema_file=_SCHEMA_PATH)

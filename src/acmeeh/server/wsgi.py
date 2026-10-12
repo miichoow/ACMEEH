@@ -14,10 +14,11 @@ Example (standalone gunicorn)::
 
 Where ``gunicorn.conf.py`` must include::
 
-    from acmeeh.server.wsgi import post_fork  # noqa: F401
+    from acmeeh.server.wsgi import post_fork, worker_exit  # noqa: F401
 
 This ensures background worker threads are started **after** gunicorn
-forks child processes (threads do not survive ``fork()``).
+forks child processes (threads do not survive ``fork()``), and that they
+and the DB pool are shut down cleanly when a worker exits.
 """
 
 from __future__ import annotations
@@ -56,3 +57,12 @@ def post_fork(server, worker):  # noqa: ANN001, ARG001
     from acmeeh.app.factory import start_workers  # noqa: PLC0415
 
     start_workers(app)
+
+
+def worker_exit(server, worker):  # noqa: ANN001, ARG001
+    """Gunicorn ``worker_exit`` hook — stop workers, then close the pool."""
+    from acmeeh.app.factory import stop_workers  # noqa: PLC0415
+    from acmeeh.db import close_pool  # noqa: PLC0415
+
+    stop_workers(app)
+    close_pool()
