@@ -48,11 +48,16 @@ class _CleanupTask:
         self.name = name
         self.interval_seconds = interval_seconds
         self.func = func
-        self._last_run: float = 0.0
+        # None = never run.  A 0.0 sentinel compared against time.monotonic()
+        # (which counts from host boot) delays the first run until the host
+        # has been up for ``interval_seconds``.
+        self._last_run: float | None = None
         self.consecutive_failures: int = 0
 
     def is_due(self, now: float) -> bool:
-        """Return whether the task is due based on elapsed time."""
+        """Return whether the task is due (never run, or interval elapsed)."""
+        if self._last_run is None:
+            return True
         return (now - self._last_run) >= self.interval_seconds
 
     def run(self, now: float, conn=None) -> None:

@@ -178,6 +178,18 @@ class TestChallengeWorkerMetrics:
 class TestCleanupTaskBackoff:
     """_CleanupTask tracks consecutive_failures independently."""
 
+    def test_first_run_due_even_with_low_monotonic_clock(self):
+        """A never-run task is due immediately, even right after host boot."""
+        task = _CleanupTask(name="t", interval_seconds=86400, func=MagicMock())
+
+        # time.monotonic() counts from host boot: 30s after boot is far
+        # below the 24h interval.
+        assert task.is_due(30.0) is True
+
+        task.run(30.0)
+        assert task.is_due(31.0) is False
+        assert task.is_due(30.0 + 86400) is True
+
     def test_cleanup_task_consecutive_failures(self):
         """consecutive_failures increments when the task callable raises."""
         failing_func = MagicMock(side_effect=RuntimeError("task error"))
