@@ -111,6 +111,7 @@ ignore = [
     "S324",     # hashlib-insecure — MD5/SHA1 used for fingerprints, not security
     "S608",     # hardcoded-sql — SQL is parameterized, ruff can't see that
     "PLR0913",  # too-many-arguments — unavoidable in DI/settings
+    "PLR0917",  # too-many-positional — same, newer ruff enables it by default
     "PLR0912",  # too-many-branches — complex but readable
     "PLR0915",  # too-many-statements — complex but readable
     "PLR2004",  # magic-value-comparison — too noisy
