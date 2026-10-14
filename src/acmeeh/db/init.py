@@ -13,6 +13,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import threading
 from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -379,6 +380,7 @@ def _reset_pool_after_fork(raw_pool: Any) -> None:
         _workers       list of worker Thread objects (dead after fork)
         _sched_runner  scheduler Thread (dead after fork)
         _waiting       deque of clients waiting for a connection
+        _lock          pool lock (replaced, state is undefined after fork)
         _closed        pool-is-not-serving flag
         _opened        pool-has-been-opened-at-least-once flag
 
@@ -419,11 +421,13 @@ def _reset_pool_after_fork(raw_pool: Any) -> None:
     if hasattr(raw_pool, "_sched_runner"):
         raw_pool._sched_runner = None  # noqa: SLF001
 
-    # --- Step 5: Reset lock ---
-    # RLock state is undefined after fork (may be held by a thread that
-    # no longer exists).  Delete it so _ensure_lock() recreates fresh.
-    with contextlib.suppress(AttributeError):
-        delattr(raw_pool, "_lock")
+    # --- Step 5: Replace the lock ---
+    # Lock state is undefined after fork (it may be held by a thread that
+    # no longer exists), so install a fresh one.  Do not delete it instead:
+    # psycopg_pool <= 3.3.0 created the lock lazily, but >= 3.3.1 creates it
+    # once in ``__init__`` and ``open()`` then fails with AttributeError.
+    # Assigning works for both.
+    raw_pool._lock = threading.Lock()  # noqa: SLF001
 
     # --- Step 6: Allow _open() to run ---
     # _open() returns early if ``not _closed``.

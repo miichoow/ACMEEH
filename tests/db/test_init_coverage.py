@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import threading
 from collections import deque
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from acmeeh.db.init import (
     _close_inherited_connections,
@@ -452,6 +455,73 @@ class TestResetPoolAfterFork:
 
         _reset_pool_after_fork(pool)
         pool.open.assert_called_once()
+
+
+class TestResetPoolLock:
+    def test_lock_is_replaced_not_deleted(self):
+        """The lock inherited from the master may be held by a dead thread."""
+        pool = MagicMock()
+        pool._pool = deque()
+        pool._closed = False
+        pool._opened = True
+        pool._min_size = 2
+        held = threading.Lock()
+        held.acquire()
+        pool._lock = held
+
+        _reset_pool_after_fork(pool)
+
+        assert pool._lock is not held
+        assert not pool._lock.locked()
+
+    def test_lock_is_created_when_missing(self):
+        """Older psycopg_pool releases create the lock lazily."""
+        pool = MagicMock(
+            spec=["_pool", "_nconns", "_workers", "_closed", "_opened", "_min_size", "open"]
+        )
+        pool._pool = deque()
+        pool._workers = []
+        pool._closed = False
+        pool._opened = True
+        pool._min_size = 2
+
+        _reset_pool_after_fork(pool)
+
+        assert not pool._lock.locked()
+
+
+class TestResetRealConnectionPool:
+    """Run the reset against a real ``psycopg_pool.ConnectionPool``.
+
+    MagicMock fabricates any attribute, so it cannot notice when the library
+    stops providing one.  A real pool does: with psycopg_pool >= 3.3.1,
+    deleting ``_lock`` made ``open()`` raise AttributeError, which the reset
+    only logs, leaving every gunicorn worker without a working pool.
+    """
+
+    def test_pool_is_reopened_after_simulated_fork(self):
+        psycopg_pool = pytest.importorskip("psycopg_pool")
+        # min_size=0: nothing tries to connect, so no server is needed.
+        pool = psycopg_pool.ConnectionPool(
+            "host=127.0.0.1 port=1 connect_timeout=1",
+            min_size=0,
+            max_size=1,
+            open=False,
+        )
+        # State the forked child inherits from an opened master pool,
+        # including a lock that a thread of the master still holds.
+        pool._opened = True
+        pool._closed = False
+        pool._lock = threading.Lock()
+        pool._lock.acquire()
+        try:
+            _reset_pool_after_fork(pool)
+
+            assert pool._opened is True
+            assert pool._closed is False
+            assert pool._workers, "worker threads were not restarted"
+        finally:
+            pool.close()
 
 
 # ======================================================================
