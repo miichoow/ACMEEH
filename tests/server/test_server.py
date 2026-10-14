@@ -231,6 +231,129 @@ class TestRunGunicornSuccess:
         assert [c[0] for c in calls.mock_calls] == ["stop_workers", "close_pool"]
         calls.stop_workers.assert_called_once_with(app)
 
+    def _gunicorn_hooks(self, app):
+        """Run ``run_gunicorn`` against the fake gunicorn; return the cfg it set."""
+        FakeBase = self._make_fake_base_application()
+        captured_cfg = {}
+
+        def capturing_run(self):
+            captured_cfg.update(self.cfg.settings)
+
+        FakeBase.run = capturing_run
+        fake_modules = self._install_fake_gunicorn(FakeBase)
+
+        from acmeeh.server.gunicorn_app import run_gunicorn
+
+        with patch.dict(sys.modules, fake_modules):
+            run_gunicorn(app, _make_settings())
+        return captured_cfg
+
+    def _run_post_fork(self):
+        """Fire the ``post_fork`` hook; return (app, calls, registered atexit callable)."""
+        app = MagicMock()
+        hooks = self._gunicorn_hooks(app)
+
+        calls = MagicMock()
+        with (
+            patch("acmeeh.db.reinit_pool_after_fork", calls.reinit),
+            patch("atexit.register", calls.register),
+            patch("acmeeh.app.factory.start_workers", calls.start_workers),
+        ):
+            hooks["post_fork"](MagicMock(), MagicMock())
+        return app, calls, calls.register.call_args.args[0]
+
+    def test_post_fork_hook_reinits_pool_before_starting_workers(self):
+        """The inherited pool must be replaced before any worker touches the DB."""
+        app, calls, _ = self._run_post_fork()
+
+        assert [c[0] for c in calls.mock_calls] == ["reinit", "register", "start_workers"]
+        calls.start_workers.assert_called_once_with(app)
+
+    def test_post_fork_hook_registers_pool_del_suppressor(self):
+        _, calls, suppress = self._run_post_fork()
+
+        calls.register.assert_called_once()
+        assert suppress.__name__ == "_suppress_pool_del"
+
+    @staticmethod
+    def _pypgkit_mocks(*, initialized=True, raw_pool=None, is_initialized_error=None):
+        """Run the atexit suppressor with pypgkit and the raw pool mocked."""
+        database = MagicMock()
+        if is_initialized_error is not None:
+            database.is_initialized.side_effect = is_initialized_error
+        else:
+            database.is_initialized.return_value = initialized
+        get_raw_pool = MagicMock(return_value=raw_pool)
+        return database, get_raw_pool
+
+    def test_suppress_pool_del_marks_pool_closed(self):
+        """Marking the pool closed stops ``__del__`` from tearing it down at exit."""
+        _, _, suppress = self._run_post_fork()
+        raw_pool = types.SimpleNamespace(_closed=False)
+        database, get_raw_pool = self._pypgkit_mocks(raw_pool=raw_pool)
+
+        with (
+            patch("pypgkit.Database", database),
+            patch("acmeeh.db.init._get_raw_pool", get_raw_pool),
+        ):
+            suppress()
+
+        assert raw_pool._closed is True
+        get_raw_pool.assert_called_once_with(database.get_instance.return_value)
+
+    def test_suppress_pool_del_noop_when_database_not_initialized(self):
+        _, _, suppress = self._run_post_fork()
+        raw_pool = types.SimpleNamespace(_closed=False)
+        database, get_raw_pool = self._pypgkit_mocks(initialized=False, raw_pool=raw_pool)
+
+        with (
+            patch("pypgkit.Database", database),
+            patch("acmeeh.db.init._get_raw_pool", get_raw_pool),
+        ):
+            suppress()
+
+        get_raw_pool.assert_not_called()
+        assert raw_pool._closed is False
+
+    def test_suppress_pool_del_noop_without_raw_pool(self):
+        _, _, suppress = self._run_post_fork()
+        database, get_raw_pool = self._pypgkit_mocks(raw_pool=None)
+
+        with (
+            patch("pypgkit.Database", database),
+            patch("acmeeh.db.init._get_raw_pool", get_raw_pool),
+        ):
+            suppress()  # must not raise
+
+        get_raw_pool.assert_called_once()
+
+    def test_suppress_pool_del_ignores_pool_without_closed_flag(self):
+        """A pool class lacking ``_closed`` must not get a stray attribute."""
+        _, _, suppress = self._run_post_fork()
+        raw_pool = types.SimpleNamespace()
+        database, get_raw_pool = self._pypgkit_mocks(raw_pool=raw_pool)
+
+        with (
+            patch("pypgkit.Database", database),
+            patch("acmeeh.db.init._get_raw_pool", get_raw_pool),
+        ):
+            suppress()
+
+        assert not hasattr(raw_pool, "_closed")
+
+    def test_suppress_pool_del_never_raises_at_interpreter_exit(self):
+        """An atexit handler must not turn worker exit into a traceback."""
+        _, _, suppress = self._run_post_fork()
+        database, get_raw_pool = self._pypgkit_mocks(is_initialized_error=RuntimeError("boom"))
+
+        with (
+            patch("pypgkit.Database", database),
+            patch("acmeeh.db.init._get_raw_pool", get_raw_pool),
+        ):
+            suppress()  # must not raise
+
+        get_raw_pool.assert_not_called()
+
     def test_worker_settings_propagated(self):
         """Workers, worker_class, and timeout are forwarded to gunicorn cfg."""
         FakeBase = self._make_fake_base_application()
