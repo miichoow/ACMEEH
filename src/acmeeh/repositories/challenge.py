@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from typing import TYPE_CHECKING
 
 from psycopg.types.json import Jsonb
@@ -21,6 +22,18 @@ log = logging.getLogger(__name__)
 class ChallengeRepository(BaseRepository[Challenge]):
     table_name = "challenges"
     primary_key = "id"
+
+    def __init__(self, database: Database) -> None:
+        super().__init__(database)
+        # Lock ids claimed through this repository instance, i.e. by this
+        # process.  Lets ``drain_processing`` release only our own in-flight
+        # challenges at shutdown, never those held by other workers.
+        self._claimed_here: set[str] = set()
+        self._claimed_here_lock = threading.Lock()
+
+    def _forget_claim(self, worker_id: str) -> None:
+        with self._claimed_here_lock:
+            self._claimed_here.discard(worker_id)
 
     def _row_to_entity(self, row: dict) -> Challenge:
         return Challenge(
@@ -168,6 +181,9 @@ class ChallengeRepository(BaseRepository[Challenge]):
                 "CAS guard failed: challenge %s not claimable (not pending or already locked)",
                 challenge_id,
             )
+        else:
+            with self._claimed_here_lock:
+                self._claimed_here.add(worker_id)
         return self._row_to_entity(row) if row else None
 
     def complete_validation(
@@ -222,6 +238,7 @@ class ChallengeRepository(BaseRepository[Challenge]):
                 ),
                 as_dict=True,
             )
+        self._forget_claim(worker_id)
         return self._row_to_entity(row) if row else None
 
     def release_stale_locks(self, stale_threshold: datetime, *, conn=None) -> int:
@@ -269,17 +286,30 @@ class ChallengeRepository(BaseRepository[Challenge]):
         return result is True
 
     def drain_processing(self) -> int:
-        """Move all PROCESSING challenges back to PENDING for graceful shutdown.
+        """Release this process's in-flight challenges back to PENDING.
+
+        Called during graceful shutdown to avoid partial state visible to
+        clients.  Only challenges claimed through this repository instance
+        are touched: challenges that other workers or instances are still
+        validating must keep their lock, otherwise their result would be
+        lost and their retry budget consumed.
 
         Returns the number of challenges drained.
         """
+        with self._claimed_here_lock:
+            worker_ids = sorted(self._claimed_here)
+        if not worker_ids:
+            return 0
+
         db = Database.get_instance()
         result = db.execute(
             "UPDATE challenges "
             "SET status = %s, retry_count = retry_count + 1, locked_by = NULL, locked_at = NULL "
-            "WHERE status = %s",
-            (ChallengeStatus.PENDING.value, ChallengeStatus.PROCESSING.value),
+            "WHERE status = %s AND locked_by = ANY(%s)",
+            (ChallengeStatus.PENDING.value, ChallengeStatus.PROCESSING.value, worker_ids),
         )
+        with self._claimed_here_lock:
+            self._claimed_here.difference_update(worker_ids)
         return result if isinstance(result, int) else 0
 
     def retry_challenge(
@@ -341,4 +371,5 @@ class ChallengeRepository(BaseRepository[Challenge]):
                 ),
                 as_dict=True,
             )
+        self._forget_claim(worker_id)
         return self._row_to_entity(row) if row else None

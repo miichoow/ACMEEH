@@ -90,3 +90,81 @@ class TestFactoryAtexitRegistration:
 
         # Only the shutdown coordinator should be registered (no container)
         assert mock_atexit.call_count == 1
+
+
+class TestShutdownDrain:
+    """The drain must run while the pool is open and only once."""
+
+    @staticmethod
+    def _app():
+        container = MagicMock()
+        container.challenge_worker = None
+        coordinator = MagicMock()
+        app = MagicMock()
+        app.extensions = {"container": container, "shutdown_coordinator": coordinator}
+        return app, container, coordinator
+
+    def test_stop_workers_drains_challenges(self):
+        from acmeeh.app.factory import stop_workers
+
+        app, container, coordinator = self._app()
+
+        stop_workers(app)
+
+        coordinator.drain_processing_challenges.assert_called_once_with(container.challenges)
+
+    def test_drain_runs_after_workers_are_stopped(self):
+        """No worker may claim a new challenge once the drain has run."""
+        from acmeeh.app.factory import stop_workers
+
+        app, container, coordinator = self._app()
+        order = MagicMock()
+        order.attach_mock(container.cleanup_worker.stop, "cleanup_stop")
+        order.attach_mock(container.expiration_worker.stop, "expiration_stop")
+        order.attach_mock(coordinator.drain_processing_challenges, "drain")
+
+        stop_workers(app)
+
+        assert [c[0] for c in order.mock_calls] == ["cleanup_stop", "expiration_stop", "drain"]
+
+    def test_atexit_drain_is_a_noop_after_stop_workers(self):
+        """After ``worker_exit`` closed the pool, atexit must not drain again."""
+        from acmeeh.app.factory import _drain_challenges_once, stop_workers
+
+        app, _, coordinator = self._app()
+
+        stop_workers(app)
+        _drain_challenges_once(app)  # what the atexit handler calls
+
+        coordinator.drain_processing_challenges.assert_called_once()
+
+    def test_atexit_drain_still_runs_without_stop_workers(self):
+        """Dev server: stop_workers is never called, atexit does the drain."""
+        from acmeeh.app.factory import _drain_challenges_once
+
+        app, container, coordinator = self._app()
+
+        _drain_challenges_once(app)
+
+        coordinator.drain_processing_challenges.assert_called_once_with(container.challenges)
+
+    def test_drain_failure_does_not_abort_stop_workers(self):
+        from acmeeh.app.factory import stop_workers
+
+        app, container, coordinator = self._app()
+        coordinator.drain_processing_challenges.side_effect = RuntimeError("pool closed")
+
+        stop_workers(app)  # must not raise
+
+        container.cleanup_worker.stop.assert_called_once()
+
+    def test_start_workers_registers_the_once_only_drain(self):
+        from acmeeh.app.factory import _drain_challenges_once, start_workers
+
+        app, container, _ = self._app()
+        container.challenge_worker = None
+
+        with patch("acmeeh.app.factory.atexit.register") as mock_atexit:
+            start_workers(app)
+
+        assert ((_drain_challenges_once, app)) in [c.args for c in mock_atexit.call_args_list]

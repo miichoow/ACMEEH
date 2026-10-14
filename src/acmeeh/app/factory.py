@@ -472,6 +472,28 @@ def create_app(  # noqa: C901, PLR0915
 # ---------------------------------------------------------------------------
 
 
+def _drain_challenges_once(app: Flask) -> None:
+    """Release this process's in-flight challenges, at most once per app.
+
+    Under gunicorn this runs from :func:`stop_workers` (``worker_exit``),
+    while the DB pool is still open.  The ``atexit`` registration made by
+    :func:`start_workers` covers the other launch modes (dev server) and
+    becomes a no-op afterwards, instead of failing on the closed pool.
+    """
+    if app.extensions.get("challenges_drained"):
+        return
+    app.extensions["challenges_drained"] = True
+
+    container = app.extensions.get("container")
+    coordinator = app.extensions.get("shutdown_coordinator")
+    if container is None or coordinator is None:
+        return
+    try:
+        coordinator.drain_processing_challenges(container.challenges)
+    except Exception:  # noqa: BLE001
+        log.debug("drain_processing_challenges failed during shutdown")
+
+
 def start_workers(app: Flask) -> None:
     """Start background worker threads.
 
@@ -496,16 +518,7 @@ def start_workers(app: Flask) -> None:
     atexit.register(container.cleanup_worker.stop)
 
     if shutdown_coordinator is not None:
-
-        def _drain_on_shutdown() -> None:
-            try:
-                shutdown_coordinator.drain_processing_challenges(
-                    container.challenges,
-                )
-            except Exception:  # noqa: BLE001
-                log.debug("drain_processing_challenges failed during shutdown")
-
-        atexit.register(_drain_on_shutdown)
+        atexit.register(_drain_challenges_once, app)
 
     container.expiration_worker.start()
     atexit.register(container.expiration_worker.stop)
@@ -515,9 +528,11 @@ def stop_workers(app: Flask) -> None:
     """Stop the background worker threads started by :func:`start_workers`.
 
     Call this from gunicorn's ``worker_exit`` hook, before closing the DB
-    pool, so no worker is mid-query on a closing pool.  Idempotent: the
-    ``atexit`` handlers registered by :func:`start_workers` call the same
-    ``stop()`` methods again later, which is harmless.
+    pool, so no worker is mid-query on a closing pool.  It also releases
+    this process's in-flight challenges, which needs the pool.  Idempotent:
+    the ``atexit`` handlers registered by :func:`start_workers` call the same
+    ``stop()`` methods again later, which is harmless, and the challenge
+    drain only runs once.
     """
     container = app.extensions.get("container")
     if container is None:
@@ -535,6 +550,10 @@ def stop_workers(app: Flask) -> None:
             worker.stop()
         except Exception:  # noqa: BLE001
             log.exception("Failed to stop %s", type(worker).__name__)
+
+    # Workers are stopped, so no new challenge gets claimed.  Release the
+    # ones still in flight now, while the pool is open.
+    _drain_challenges_once(app)
 
 
 # ---------------------------------------------------------------------------

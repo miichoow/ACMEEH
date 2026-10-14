@@ -652,15 +652,19 @@ class TestChallengeRepository:
     @patch("acmeeh.repositories.challenge.Database")
     def test_drain_processing(self, MockDB):
         db = MockDB.get_instance.return_value
+        db.fetch_one.return_value = _challenge_row()
         db.execute.return_value = 5
         repo = self._make_repo(db)
+        repo.claim_for_processing(_uuid(), "w-1")
         assert repo.drain_processing() == 5
 
     @patch("acmeeh.repositories.challenge.Database")
     def test_drain_processing_not_int(self, MockDB):
         db = MockDB.get_instance.return_value
+        db.fetch_one.return_value = _challenge_row()
         db.execute.return_value = None
         repo = self._make_repo(db)
+        repo.claim_for_processing(_uuid(), "w-1")
         assert repo.drain_processing() == 0
 
     @patch("acmeeh.repositories.challenge.Database")
