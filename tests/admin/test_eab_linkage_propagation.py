@@ -290,6 +290,27 @@ class TestIdentifierAddPropagation:
 
 
 class TestIdentifierRemovePropagation:
+    def test_propagation_failure_is_not_swallowed(
+        self,
+        service,
+        eab_repo,
+        allowlist_repo,
+    ):
+        """A failed removal must reach the admin instead of reporting success."""
+        cred = _bound_cred(account_id=uuid4())
+        ident = _ident()
+        eab_repo.seed(cred)
+        allowlist_repo.seed(ident)
+
+        def boom(_eab_id: UUID, _ident_id: UUID) -> None:
+            msg = "db down"
+            raise RuntimeError(msg)
+
+        eab_repo.propagate_identifier_remove = boom  # type: ignore[method-assign]
+
+        with pytest.raises(RuntimeError, match="db down"):
+            service.remove_eab_identifier(cred.id, ident.id)
+
     def test_removes_from_bound_account(self, service, eab_repo, allowlist_repo):
         account_id = uuid4()
         cred = _bound_cred(account_id=account_id)
@@ -366,6 +387,26 @@ class TestCsrProfileAssignPropagation:
 
 
 class TestCsrProfileUnassignPropagation:
+    def test_propagation_failure_is_not_swallowed(
+        self,
+        service,
+        eab_repo,
+        csr_profile_repo,
+    ):
+        cred = _bound_cred(account_id=uuid4())
+        profile = _profile()
+        eab_repo.seed(cred)
+        csr_profile_repo.seed(profile)
+
+        def boom(_eab_id: UUID, _profile_id: UUID) -> None:
+            msg = "db down"
+            raise RuntimeError(msg)
+
+        eab_repo.propagate_csr_profile_unassign = boom  # type: ignore[method-assign]
+
+        with pytest.raises(RuntimeError, match="db down"):
+            service.unassign_eab_csr_profile(cred.id, profile.id)
+
     def test_removes_from_bound_account(self, service, eab_repo, csr_profile_repo):
         account_id = uuid4()
         cred = _bound_cred(account_id=account_id)

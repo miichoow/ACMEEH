@@ -615,6 +615,26 @@ EAB Allowed Identifiers
 Associate allowed identifiers with EAB credentials to restrict which identifiers
 an account registered with a given EAB credential may request certificates for.
 
+Changes take effect immediately. Adding or removing an association is applied to
+**every** ACME account registered with the credential (all of them when
+``acme.eab_reusable`` is ``true``), so clients do not have to call ``newAccount``
+again. A removal is applied to an account only if no *other* EAB credential held
+by that account still grants the identifier. If propagating a removal fails, the
+request returns an error instead of ``204`` so that the revocation is not silently
+lost; the call is idempotent and can be retried.
+
+.. note::
+
+   An allowed identifier assigned directly to an account
+   (``/api/allowed-identifiers/{id}/accounts/{account_id}``) is stored in the same
+   row as an EAB-derived one. Removing the identifier from the EAB therefore also
+   revokes the direct assignment on the accounts holding that EAB.
+
+   Accounts registered through a reusable EAB *before* the ``010_account_eab_link``
+   migration have no recorded registration link, except for the most recent one.
+   For those older accounts, re-registration (``newAccount``) or a direct
+   ``/api/allowed-identifiers/{id}/accounts/{account_id}`` call is still needed.
+
 **GET** ``/api/eab/{cred_id}/allowed-identifiers``
 
 List allowed identifiers associated with an EAB credential. *admin*
@@ -657,6 +677,10 @@ EAB CSR Profile
 
 Assign a CSR profile to an EAB credential. Accounts registered with this credential
 will have their certificate requests validated against the assigned profile.
+Assigning or removing a profile is applied immediately to every account registered
+with the credential, with the same rules as for allowed identifiers (a removal does
+not apply to an account while another of its EAB credentials still assigns the same
+profile, and a failed removal is reported as an error).
 
 **GET** ``/api/eab/{cred_id}/csr-profile``
 

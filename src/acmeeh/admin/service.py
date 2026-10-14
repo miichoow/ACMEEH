@@ -679,14 +679,14 @@ class AdminUserService:
             raise AcmeProblem(msg, "Allowed identifier not found", status=404)
 
         self._eab.add_identifier_association(eab_id, identifier_id)
-        # Propagate to the account currently bound to this EAB so the
+        # Propagate to the accounts holding this EAB so the
         # linkage takes effect without requiring the ACME client to
         # re-register.
         try:
             self._eab.propagate_identifier_add(eab_id, identifier_id)
         except Exception:  # noqa: BLE001
             log.warning(
-                "Failed to propagate EAB %s identifier %s to bound account",
+                "Failed to propagate EAB %s identifier %s to holding accounts",
                 eab_id,
                 identifier_id,
                 exc_info=True,
@@ -723,15 +723,10 @@ class AdminUserService:
             raise AcmeProblem(msg, "EAB credential not found", status=404)
 
         self._eab.remove_identifier_association(eab_id, identifier_id)
-        try:
-            self._eab.propagate_identifier_remove(eab_id, identifier_id)
-        except Exception:  # noqa: BLE001
-            log.warning(
-                "Failed to propagate EAB %s identifier %s removal to bound account",
-                eab_id,
-                identifier_id,
-                exc_info=True,
-            )
+        # Unlike additions, a failed removal must not be swallowed: the admin
+        # would see success while the accounts keep the right to order the
+        # identifier.  The operation is idempotent, so a retry is safe.
+        self._eab.propagate_identifier_remove(eab_id, identifier_id)
 
         self._log_action(
             actor_id,
@@ -794,7 +789,7 @@ class AdminUserService:
             self._eab.propagate_csr_profile_assign(eab_id, profile_id, actor_id)
         except Exception:  # noqa: BLE001
             log.warning(
-                "Failed to propagate EAB %s CSR profile %s to bound account",
+                "Failed to propagate EAB %s CSR profile %s to holding accounts",
                 eab_id,
                 profile_id,
                 exc_info=True,
@@ -840,15 +835,8 @@ class AdminUserService:
             raise AcmeProblem(msg, "CSR profile not found", status=404)
 
         self._eab.unassign_csr_profile(eab_id, profile_id)
-        try:
-            self._eab.propagate_csr_profile_unassign(eab_id, profile_id)
-        except Exception:  # noqa: BLE001
-            log.warning(
-                "Failed to propagate EAB %s CSR profile %s removal to bound account",
-                eab_id,
-                profile_id,
-                exc_info=True,
-            )
+        # Not swallowed, for the same reason as ``remove_eab_identifier``.
+        self._eab.propagate_csr_profile_unassign(eab_id, profile_id)
 
         self._log_action(
             actor_id,
