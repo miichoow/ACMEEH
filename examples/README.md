@@ -24,6 +24,7 @@ PYTHONPATH=src DB_PASSWORD=secret .venv/Scripts/python.exe -m acmeeh -c examples
 | [`docker-compose.yaml`](docker-compose.yaml) | Docker Compose: container hostnames, env vars, auto DB setup. |
 | [`behind-reverse-proxy.yaml`](behind-reverse-proxy.yaml) | Behind nginx/HAProxy: trusted proxies, base path, forwarded headers. |
 | [`gevent-workers.yaml`](gevent-workers.yaml) | High-concurrency with gevent async workers. |
+| [`ha-patroni.yaml`](ha-patroni.yaml) | Highly available: 3 instances behind a load balancer, PostgreSQL via local HAProxy + Patroni, TLS `verify-full`. See `docs/ha-postgres.rst`. |
 
 ### CA Backends
 

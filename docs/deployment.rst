@@ -550,7 +550,7 @@ Database Sizing
 
    **Connection Pool**
 
-   Set ``database.max_connections`` to roughly ``server.workers x 2``. PostgreSQL's default ``max_connections`` is 100, which is usually sufficient.
+   Each gunicorn worker process owns its own pool, so PostgreSQL can see up to ``instances x server.workers x database.max_connections`` connections.  Set ``database.max_connections`` to cover the request threads of one worker (``server.threads`` with ``gthread``) plus the three background workers, and check the product against PostgreSQL's ``max_connections`` (100 by default).
 
 Connection Pool Pressure Guard
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -677,21 +677,38 @@ Set ``logging.format: json`` to output structured JSON logs suitable for log agg
 High Availability
 -----------------
 
-ACMEEH is stateless at the application layer --- all state is in PostgreSQL. This means you can run multiple instances behind a load balancer.
+Several ACMEEH instances can run behind a load balancer: the application keeps no per-request
+state outside PostgreSQL.  *Runtime* state is what lives in the database; a few things must still be
+kept identical on every instance (the YAML configuration, the CA key and certificate files or the
+HSM, ``admin_api.token_secret``), and the database itself must be made highly available.
+
+.. important::
+
+   A highly available database is not "point all instances at the same PostgreSQL and enable
+   replication".  ACMEEH relies on session-level advisory locks, single-use nonces and a serial
+   sequence, which rules out multi-master setups and transaction-mode connection poolers and
+   makes synchronous replication necessary.  Failing over also needs ACMEEH-side behaviour
+   (connection pool, health checks, load balancer settings) that was found to matter in testing.
+
+   A complete, tested design (three nodes, Patroni, etcd, HAProxy, TLS), the production
+   configuration, the procedures and the acceptance tests are in :doc:`ha-postgres`.
 
 Multi-Instance Setup
 ^^^^^^^^^^^^^^^^^^^^
 
 #. Deploy 2+ ACMEEH instances with the same config (same ``external_url``)
-#. Point all instances at the same PostgreSQL database
-#. Load balance across instances (round-robin or least-connections)
-#. Use PostgreSQL replication for database HA
+#. Point them at a **highly available PostgreSQL** (see :doc:`ha-postgres`), not at a single
+   server with ``pg_dump`` backups
+#. Load balance across instances, with the health check and retry settings from :doc:`ha-postgres`
+#. Set ``security.rate_limits.backend: database`` so that limits are shared
+#. Set ``server.threads`` when using ``worker_class: gthread``
 
 .. note::
 
-   **CRL Worker**
+   **Background workers**
 
-   The CRL rebuild worker, like all background workers, uses PostgreSQL advisory locks for leader election. Only one instance runs the CRL worker at a time, regardless of how many ACMEEH instances are deployed. No additional coordination is needed.
+   The challenge, cleanup and expiration workers, like the CRL rebuild, use PostgreSQL advisory
+   locks: only one instance acts at a time.  No additional coordination is needed.
 
 Backup & Recovery
 -----------------

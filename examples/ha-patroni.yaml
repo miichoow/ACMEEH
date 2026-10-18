@@ -1,0 +1,81 @@
+_comment:
+- Highly available deployment (3 nodes).  This file is IDENTICAL on every ACMEEH instance.
+- Each instance reaches the PostgreSQL primary through a HAProxy running on the same node
+- (127.0.0.1:5000) that follows a Patroni cluster, with TLS verified end to end.  A load
+- balancer in front terminates HTTPS and spreads the clients across the instances.
+- See docs/ha-postgres.rst and the templates in deploy/ha/.
+server:
+  external_url: https://acme.example.org
+  bind: 0.0.0.0
+  port: 8443
+  workers: 2
+  worker_class: gthread
+  # gunicorn runs ONE thread per gthread worker by default, i.e. one request at a time: a stalled
+  # database call then blocks the worker, health checks included.
+  threads: 4
+  timeout: 30
+  graceful_timeout: 45
+proxy:
+  enabled: true
+  trusted_proxies:
+  - 10.0.0.0/8
+database:
+  host: 127.0.0.1
+  port: 5000
+  database: acmeeh
+  user: acmeeh
+  password: ${ACMEEH_DB_PASSWORD}
+  sslmode: verify-full
+  sslrootcert: /etc/acmeeh/tls/ca.pem
+  min_connections: 5
+  # One pool PER worker process: PostgreSQL sees nodes x workers x max_connections at most.
+  # 3 x 2 x 30 = 180, below the 200 of deploy/ha/patroni.yml.
+  max_connections: 30
+  # Time a request waits for a connection before answering 503 + Retry-After (a failover
+  # normally completes within this window).
+  connection_timeout: 8.0
+  # The schema is created once, by `acmeeh db migrate` with auto_setup: true on ONE node.
+  auto_setup: false
+ca:
+  backend: internal
+  default_validity_days: 90
+  max_validity_days: 397
+  internal:
+    # Same files on every node (or use the `hsm` backend).
+    root_cert_path: /etc/acmeeh/ca/root.pem
+    root_key_path: /etc/acmeeh/ca/root-key.pem
+    # `database` draws serials from a PostgreSQL sequence, so they stay unique across instances.
+    serial_source: database
+challenges:
+  enabled:
+  - http-01
+  background_worker:
+    enabled: true
+    poll_seconds: 10
+    stale_seconds: 300
+security:
+  rate_limits:
+    enabled: true
+    # `memory` counts per process: with 3 instances the real limit would be 3x the configured one.
+    backend: database
+admin_api:
+  enabled: true
+  base_path: /api
+  # Must be identical on every instance: a token issued by one is verified by the others.
+  token_secret: ${ADMIN_TOKEN_SECRET}
+  token_expiry_seconds: 3600
+  initial_admin_email: admin@example.org
+ari:
+  # RFC 9773 renewalInfo: spreads client renewals over a window instead of all at once.
+  enabled: true
+  renewal_percentage: 0.6667
+metrics:
+  enabled: true
+  path: /metrics
+  auth_required: false
+logging:
+  level: INFO
+  format: json
+  audit:
+    enabled: true
+    file: /var/log/acmeeh/audit.log

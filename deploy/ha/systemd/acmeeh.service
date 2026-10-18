@@ -1,0 +1,41 @@
+# /etc/systemd/system/acmeeh.service  -- ACMEEH instance in a highly available deployment.
+#
+# Differences from the single-server unit in docs/deployment.rst, and why:
+#   * Restart=always: the unit must come back by itself.  During a database failover an instance
+#     can be restarted while no primary exists; it exits at start-up if the database is
+#     unreachable, so it has to keep retrying.  (Measured: pool timeouts surface as HTTP 503, the
+#     process stays up; this is the safety net for a start-up that coincides with the outage.)
+#   * After=haproxy-db.service: ACMEEH talks to the database through 127.0.0.1:5000.
+#   * No dependency on postgresql.service: the database lives on the cluster, not on this node.
+#   * TimeoutStopSec above server.graceful_timeout so that in-flight challenge validations can drain.
+#
+# All three instances may be started at the same moment (first deployment, Ansible run):
+# the initial admin bootstrap is safe against that.
+
+[Unit]
+Description=ACMEEH ACME server
+After=network-online.target haproxy-db.service
+Wants=network-online.target haproxy-db.service
+
+[Service]
+Type=simple
+User=acmeeh
+Group=acmeeh
+WorkingDirectory=/opt/acmeeh
+EnvironmentFile=/etc/acmeeh/env
+ExecStart=/opt/acmeeh/.venv/bin/python -m acmeeh -c /etc/acmeeh/config.yaml
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=always
+RestartSec=5
+TimeoutStopSec=45
+LimitNOFILE=65536
+
+# Hardening (the service only needs to read its config and CA files and open sockets)
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/log/acmeeh /opt/acmeeh/data
+
+[Install]
+WantedBy=multi-user.target

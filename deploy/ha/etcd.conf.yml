@@ -1,0 +1,41 @@
+# etcd member configuration (etcd >= 3.5), one file per node: /etc/etcd/etcd.conf.yml
+# Run with:  etcd --config-file /etc/etcd/etcd.conf.yml
+#
+# Replace the <PLACEHOLDERS>.  Only the lines marked [node] differ between nodes.
+#
+# Status: the TLS + client-certificate-auth flags were validated on the test cluster (3 members, docker).
+#
+# Sizing: etcd stores a few KB (Patroni leader key, member and config keys).  1 vCPU / 512 MB
+# is enough, but it needs a fast, DEDICATED-latency disk for its WAL: do not put it on a
+# volume that PostgreSQL saturates.  Odd number of members only: 3 tolerates the loss of 1.
+
+name: <ETCD_NAME>                                  # [node] etcd1 / etcd2 / etcd3
+data-dir: /var/lib/etcd
+
+listen-client-urls: https://0.0.0.0:2379
+advertise-client-urls: https://<NODE_FQDN>:2379    # [node]
+listen-peer-urls: https://0.0.0.0:2380
+initial-advertise-peer-urls: https://<NODE_FQDN>:2380   # [node]
+
+initial-cluster: etcd1=https://<ETCD1_FQDN>:2380,etcd2=https://<ETCD2_FQDN>:2380,etcd3=https://<ETCD3_FQDN>:2380
+initial-cluster-token: acmeeh-etcd
+initial-cluster-state: new                         # "existing" when adding a member to a running cluster
+
+# Clients (Patroni) must present a certificate signed by the CA: anyone who can read or write
+# these keys can steer the PostgreSQL cluster.
+client-transport-security:
+  cert-file: /etc/etcd/tls/<ETCD_NAME>.crt         # [node] SAN must contain <NODE_FQDN>
+  key-file: /etc/etcd/tls/<ETCD_NAME>.key          # [node]
+  trusted-ca-file: /etc/etcd/tls/ca.pem
+  client-cert-auth: true
+
+peer-transport-security:
+  cert-file: /etc/etcd/tls/<ETCD_NAME>.crt         # [node] needs both serverAuth and clientAuth
+  key-file: /etc/etcd/tls/<ETCD_NAME>.key          # [node]
+  trusted-ca-file: /etc/etcd/tls/ca.pem
+  client-cert-auth: true
+
+# Keep the database from growing unbounded and compact old revisions automatically.
+auto-compaction-mode: periodic
+auto-compaction-retention: "1h"
+quota-backend-bytes: 2147483648

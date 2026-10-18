@@ -1,0 +1,27 @@
+# /etc/systemd/system/haproxy-db.service
+#
+# Second HAProxy instance dedicated to the database route (deploy/ha/haproxy-db.cfg), independent
+# of the distribution's haproxy.service so that a change on one cannot take down the other.
+# Skip this unit and merge the two `listen` blocks into your existing haproxy.cfg if you prefer a
+# single instance.
+#
+# Status: not exercised as a systemd unit on the test cluster (HAProxy runs in a container there).
+
+[Unit]
+Description=HAProxy - route ACMEEH to the PostgreSQL primary
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStartPre=/usr/sbin/haproxy -f /etc/haproxy/haproxy-db.cfg -c -q
+ExecStart=/usr/sbin/haproxy -Ws -f /etc/haproxy/haproxy-db.cfg -p /run/haproxy-db.pid
+ExecReload=/usr/sbin/haproxy -f /etc/haproxy/haproxy-db.cfg -c -q
+ExecReload=/bin/kill -USR2 $MAINPID
+KillMode=mixed
+Restart=always
+RestartSec=2
+SuccessExitStatus=143
+
+[Install]
+WantedBy=multi-user.target

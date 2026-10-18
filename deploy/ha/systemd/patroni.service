@@ -1,0 +1,35 @@
+# /etc/systemd/system/patroni.service
+#
+# Patroni owns PostgreSQL: PostgreSQL itself must NOT be enabled as a systemd service on these
+# nodes (`systemctl disable --now postgresql`), otherwise two supervisors fight over it.
+#
+# Status: adapted from Patroni's reference unit; the test cluster runs Patroni in a container, so this
+# unit has not been exercised there.  Validate with the plan in docs/ha-postgres.rst.
+
+[Unit]
+Description=Patroni (PostgreSQL high availability) for ACMEEH
+Documentation=https://patroni.readthedocs.io/
+After=syslog.target network-online.target etcd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=postgres
+Group=postgres
+# Secrets stay out of patroni.yml: PATRONI_SUPERUSER_PASSWORD, PATRONI_REPLICATION_PASSWORD,
+# PATRONI_RESTAPI_PASSWORD (chmod 0600, owner root).
+EnvironmentFile=-/etc/patroni/patroni.env
+ExecStart=/usr/local/bin/patroni /etc/patroni/patroni.yml
+ExecReload=/bin/kill -s HUP $MAINPID
+
+# Stop Patroni only; Patroni stops PostgreSQL itself (fast shutdown) and, on a leader,
+# releases the lock so another node takes over immediately.
+KillMode=process
+TimeoutSec=30
+# Reference unit: no automatic restart.  A crashing Patroni is an incident to look at, and with
+# `watchdog.mode: required` the node resets itself anyway.  Alert on `patroni.service` failing.
+Restart=no
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

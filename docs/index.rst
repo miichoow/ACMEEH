@@ -89,4 +89,5 @@ See the :doc:`installation` guide for detailed setup instructions.
    admin
    docker
    deployment
+   ha-postgres
    development

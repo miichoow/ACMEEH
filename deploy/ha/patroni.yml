@@ -1,0 +1,149 @@
+# Patroni configuration for one node of a 3-node ACMEEH database tier.
+#
+# Copy to /etc/patroni/patroni.yml on EACH node and replace the <PLACEHOLDERS>.
+# Only the lines marked [node] differ between nodes.
+#
+# Status of this template
+#   * Settings validated on the test cluster (docker, 3 nodes, see docs/ha-postgres.rst, "Validation"):
+#     quorum synchronous replication, failsafe_mode, TLS on etcd / REST API / PostgreSQL,
+#     scram-sha-256 + hostssl only, REST write authentication, replication over verify-full.
+#   * NOT testable on the test cluster, validate on your servers: the watchdog section, the
+#     pgBackRest archive_command / restore settings, the real Debian/RHEL paths.
+#
+# File permissions: this file holds passwords.  chown postgres:postgres, chmod 0600.
+# Prefer injecting secrets through the PATRONI_* environment variables of the systemd unit
+# (EnvironmentFile=/etc/patroni/patroni.env, chmod 0600) over writing them here.
+
+scope: acmeeh-pg                    # cluster name, identical on all nodes
+name: <NODE_NAME>                   # [node] pg1 / pg2 / pg3 : unique
+
+# ---------------------------------------------------------------------------
+# REST API : HTTPS only.  GET endpoints (/primary, /replica, /health, /metrics) stay anonymous
+# so that HAProxy and monitoring need no secret; anything that changes state (switchover,
+# restart, reinit, config) requires the password below.
+# ---------------------------------------------------------------------------
+restapi:
+  listen: 0.0.0.0:8008
+  connect_address: <NODE_FQDN>:8008          # [node] name the OTHER nodes use to reach this one
+  certfile: /etc/patroni/tls/<NODE_NAME>.crt # [node] SAN must contain <NODE_FQDN>
+  keyfile: /etc/patroni/tls/<NODE_NAME>.key  # [node]
+  cafile: /etc/patroni/tls/ca.pem
+  verify_client: none
+  authentication:
+    username: patroni
+    password: <REST_PASSWORD>
+
+ctl:
+  insecure: false
+  cacert: /etc/patroni/tls/ca.pem
+
+# ---------------------------------------------------------------------------
+# etcd : HTTPS + client certificate (etcd runs with --client-cert-auth)
+# ---------------------------------------------------------------------------
+etcd3:
+  hosts: <ETCD1_FQDN>:2379,<ETCD2_FQDN>:2379,<ETCD3_FQDN>:2379
+  protocol: https
+  cacert: /etc/patroni/tls/ca.pem
+  cert: /etc/patroni/tls/<NODE_NAME>.crt     # [node] needs the clientAuth extended key usage
+  key: /etc/patroni/tls/<NODE_NAME>.key      # [node]
+
+# ---------------------------------------------------------------------------
+# Cluster-wide settings.  `bootstrap.dcs` is only read when the cluster is first created;
+# afterwards change them with `patronictl edit-config`.
+# ---------------------------------------------------------------------------
+bootstrap:
+  dcs:
+    ttl: 30                         # leader lease: a crashed primary is replaced after ~ttl (measured: 27-33 s)
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 1048576   # bytes: a standby further behind is not promoted
+
+    # Quorum synchronous replication: synchronous_standby_names = ANY 1 (standbyA, standbyB).
+    # A COMMIT is acknowledged only once at least one standby has received it, so a failover
+    # never loses an acknowledged write, and losing ONE standby does not block writes.
+    # (Patroni >= 4.0.  With plain `synchronous_mode: true` on 2 standbys, losing the sync
+    # standby stalls writes for about `ttl`; measured 30 s.)
+    synchronous_mode: quorum
+    synchronous_node_count: 1
+
+    # If etcd becomes unreachable, the primary keeps accepting writes as long as it can still
+    # reach every member over the REST API, instead of demoting itself to read-only.
+    failsafe_mode: true
+
+    postgresql:
+      use_pg_rewind: true           # needs wal_log_hints or data checksums (both enabled below)
+      use_slots: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        max_wal_senders: 10
+        max_replication_slots: 10
+        wal_log_hints: "on"
+        max_connections: 200        # >= nodes' ACMEEH instances x workers x database.max_connections (+ margin)
+        password_encryption: scram-sha-256
+        ssl: "on"
+        ssl_cert_file: /etc/postgresql/tls/server.crt
+        ssl_key_file: /etc/postgresql/tls/server.key     # owner postgres, mode 0600
+        ssl_min_protocol_version: TLSv1.2
+        # --- WAL archiving for backups (pgBackRest) : see deploy/ha/pgbackrest.conf ---
+        archive_mode: "on"
+        archive_command: "pgbackrest --stanza=acmeeh archive-push %p"
+        archive_timeout: 60s
+        # Fetch WAL from the archive when a standby falls too far behind (also used by restores)
+        restore_command: "pgbackrest --stanza=acmeeh archive-get %f \"%p\""
+      # Nothing in clear text.  Replace 0.0.0.0/0 with the subnets of the 3 nodes
+      # (replication, HAProxy checks and ACMEEH reach PostgreSQL from those addresses).
+      pg_hba:
+        - local   all         all                          scram-sha-256
+        - hostssl replication replicator <NODES_CIDR>      scram-sha-256
+        - hostssl all         all        <NODES_CIDR>      scram-sha-256
+        - hostnossl all       all        0.0.0.0/0         reject
+
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+
+  # Disaster recovery (all data servers lost): see "Disaster recovery" in docs/ha-postgres.rst for
+  # the custom bootstrap (`method: pgbackrest_restore`) that rebuilds the cluster from pgBackRest,
+  # optionally to a point in time.  Keep the archive_* settings above in bootstrap.dcs: a rebuilt
+  # cluster starts from them.
+
+# ---------------------------------------------------------------------------
+# Local PostgreSQL
+# ---------------------------------------------------------------------------
+postgresql:
+  listen: 0.0.0.0:5432
+  connect_address: <NODE_FQDN>:5432          # [node]
+  data_dir: /var/lib/postgresql/16/main      # Debian/Ubuntu.  RHEL: /var/lib/pgsql/16/data
+  bin_dir: /usr/lib/postgresql/16/bin        # Debian/Ubuntu.  RHEL: /usr/pgsql-16/bin
+  authentication:
+    superuser:
+      username: postgres
+      password: <SUPERUSER_PASSWORD>
+      sslmode: verify-full
+      sslrootcert: /etc/patroni/tls/ca.pem
+    replication:
+      username: replicator
+      password: <REPLICATION_PASSWORD>
+      sslmode: verify-full
+      sslrootcert: /etc/patroni/tls/ca.pem
+
+# ---------------------------------------------------------------------------
+# Watchdog: if Patroni itself hangs (or the VM freezes) the kernel resets the machine, so
+# an old primary can never keep accepting writes after a new one was elected.
+# NOT validated on the test cluster (no /dev/watchdog in containers).  Required in production.
+#   modprobe softdog   (persist in /etc/modules-load.d/softdog.conf)
+#   udev rule: KERNEL=="watchdog", OWNER="postgres", MODE="0600"
+# Test it: `echo c > /proc/sysrq-trigger` must NOT be the only protection you rely on;
+# see "Validation plan for your servers" in docs/ha-postgres.rst.
+# ---------------------------------------------------------------------------
+watchdog:
+  mode: required
+  device: /dev/watchdog
+  safety_margin: 5
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false
