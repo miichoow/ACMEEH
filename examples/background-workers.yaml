@@ -13,6 +13,7 @@ server:
   external_url: https://acme.corp.internal
   workers: 4
   worker_class: gthread
+  threads: 4
 database:
   database: acmeeh
   user: acmeeh

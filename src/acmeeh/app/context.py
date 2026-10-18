@@ -113,6 +113,10 @@ class Container:
         )
 
         self.db: Database = db
+        # Lets request handlers refuse with 503 before consuming a nonce when the database is down.
+        from acmeeh.db.init import AvailabilityGate, probe_database  # noqa: PLC0415
+
+        self.db_gate = AvailabilityGate(lambda: probe_database(db))
         self.settings: AcmeehSettings = settings
         self.shutdown_coordinator = shutdown_coordinator
 
@@ -413,6 +417,8 @@ class Container:
         self.order_service._metrics = _mc  # noqa: SLF001
         self.challenge_service._metrics = _mc  # noqa: SLF001
         self.certificate_service._metrics = _mc  # noqa: SLF001
+        if self.challenge_worker is not None:
+            self.challenge_worker._metrics = _mc  # noqa: SLF001
 
         # Cleanup worker
         from acmeeh.services.cleanup_worker import CleanupWorker as _CUW  # noqa: N814, PLC0415
@@ -423,6 +429,7 @@ class Container:
             settings=settings,
             db=db,
             notifier=self.notification_service,
+            metrics=self.metrics_collector,
         )
 
         # Expiration worker
@@ -433,6 +440,7 @@ class Container:
             notification_service=self.notification_service,
             settings=settings.notifications,
             db=db,
+            metrics=self.metrics_collector,
         )
 
 

@@ -14,10 +14,13 @@ import contextlib
 import logging
 import os
 import threading
-from collections.abc import Generator
+import time
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import psycopg
+from psycopg.rows import tuple_row
 from pypgkit import Database, DatabaseConfig
 
 if TYPE_CHECKING:
@@ -116,6 +119,82 @@ def get_pool_health(
         return "healthy", {}
 
 
+# Short enough to answer before a load balancer's health-check timeout (typically 3 s).
+PROBE_TIMEOUT_SECONDS = 2.0
+
+
+def probe_database(db: Any, timeout: float = PROBE_TIMEOUT_SECONDS) -> None:
+    """Check that a writable connection can be obtained, failing fast.
+
+    ``Database.fetch_value`` waits for a pool connection up to
+    ``database.connection_timeout`` (8 s on the test cluster).  During a failover that is longer
+    than a load balancer's health-check timeout, so ``/readyz`` appeared hung, every
+    instance was dropped at once and clients got a balancer-generated 503.  Here the
+    checkout gives up after *timeout* seconds and raises (``PoolTimeout``).  The pool's
+    check (see :func:`install_writable_check`) already rejects connections to a standby,
+    so a node that can only reach a standby fails this probe too.
+
+    Falls back to ``db.fetch_value`` when the raw pool is not reachable.
+    """
+    raw_pool = _get_raw_pool(db)
+    if raw_pool is not None and callable(getattr(raw_pool, "connection", None)):
+        with raw_pool.connection(timeout=timeout) as conn:
+            conn.execute("SELECT 1")
+        return
+    db.fetch_value("SELECT 1")
+
+
+class DatabaseUnavailableError(ConnectionError):
+    """Raised by :class:`AvailabilityGate` while the database is known to be unreachable."""
+
+
+class AvailabilityGate:
+    """A cheap, shared answer to "can this process reach a writable database right now?".
+
+    ACMEEH consumes a request's single-use nonce before doing the work.  If the database fails
+    afterwards the request returns 503 but its nonce is gone, so a client that replays the same
+    signed request gets ``badNonce``, and keeps getting it while the outage lasts (observed with
+    lego during a failover).  Asking this gate first lets the request be refused with 503 *before*
+    the nonce is consumed, and quickly, instead of holding a worker for the whole pool timeout.
+
+    Both answers are cached for a short time so the gate costs at most one database round trip per
+    ``ok_ttl`` per process, and blocked requests fail immediately for ``fail_ttl`` instead of each
+    waiting for its own probe timeout.  Races between threads only cause an extra probe.
+    """
+
+    def __init__(
+        self,
+        probe: Callable[[], None],
+        *,
+        ok_ttl: float = 1.0,
+        fail_ttl: float = 0.5,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        self._probe = probe
+        self._ok_ttl = ok_ttl
+        self._fail_ttl = fail_ttl
+        self._clock = clock
+        self._ok_until = 0.0
+        self._fail_until = 0.0
+        self._last_error: Exception | None = None
+
+    def check(self) -> None:
+        """Return if the database looks reachable; raise otherwise."""
+        now = self._clock()
+        if now < self._ok_until:
+            return
+        if now < self._fail_until and self._last_error is not None:
+            msg = "database unreachable (recent probe failed)"
+            raise DatabaseUnavailableError(msg) from self._last_error
+        try:
+            self._probe()
+        except Exception as exc:
+            self._last_error = exc
+            self._fail_until = self._clock() + self._fail_ttl
+            raise
+        self._ok_until = self._clock() + self._ok_ttl
+
+
 def is_pool_healthy(db: Any, reserve: int = 2) -> bool:
     """Return ``True`` when the pool has more than *reserve* connections free.
 
@@ -124,6 +203,64 @@ def is_pool_healthy(db: Any, reserve: int = 2) -> bool:
     """
     health, _ = get_pool_health(db, pressure_threshold=reserve)
     return health == "healthy"
+
+
+# ---------------------------------------------------------------------------
+# Pool check: never hand out a connection attached to a standby
+# ---------------------------------------------------------------------------
+
+
+class ReadOnlyConnectionError(psycopg.OperationalError):
+    """A pooled connection is attached to a node that is in recovery (a standby)."""
+
+
+def _reject_read_only_connection(conn: Any) -> None:
+    """psycopg_pool ``check`` callback: the connection must be alive and writable.
+
+    After a failover (Patroni switchover, a promoted standby), connections that were
+    opened against the node that was then demoted stay in the pool.  psycopg_pool's
+    default check passes on a standby, and ``ReadOnlySqlTransaction`` does not close
+    the connection, so every request that draws one keeps failing until it is recycled
+    (minutes).  Asking the server whether it is in recovery costs the same single round
+    trip as the default check.
+
+    The connection is closed before raising: psycopg_pool only discards and replaces a
+    connection whose transaction status is UNKNOWN (closed or broken); an open one that
+    merely failed the check would be returned to the pool and re-checked indefinitely.
+    """
+    previous = conn.autocommit
+    conn.autocommit = True  # keep the check out of any transaction
+    try:
+        with conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute("SELECT pg_is_in_recovery()")
+            row = cur.fetchone()
+    finally:
+        conn.autocommit = previous
+    if row is not None and row[0]:
+        with contextlib.suppress(Exception):
+            conn.close()
+        msg = "connection is attached to a standby (pg_is_in_recovery)"
+        raise ReadOnlyConnectionError(msg)
+
+
+def install_writable_check(db: Any) -> bool:
+    """Make the pool reject standby connections at checkout.
+
+    PyPGKit builds the pool with psycopg_pool's own ``check`` and exposes no hook for
+    it, so the callback is set on the raw pool, the same layer ``reinit_pool_after_fork``
+    already works on.  Returns ``True`` when installed; an unexpected pool layout only
+    logs a warning, since ACMEEH still works (with the default check) without it.
+    """
+    raw_pool = _get_raw_pool(db)
+    if raw_pool is None or not hasattr(raw_pool, "_check"):
+        log.warning(
+            "Cannot install the writable-connection pool check: unexpected pool layout; "
+            "connections left on a demoted node will not be discarded automatically",
+        )
+        return False
+    raw_pool._check = _reject_read_only_connection  # noqa: SLF001
+    log.info("Pool check installed: connections attached to a standby are discarded")
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +601,14 @@ def _reset_pool_after_fork(raw_pool: Any) -> None:
 
 def _settings_to_config(settings: DatabaseSettings) -> DatabaseConfig:
     """Map ACMEEH DatabaseSettings to PyPGKit DatabaseConfig."""
+    options: dict[str, Any] = {"prepare_threshold": None}
+    # libpq connection parameters.  ``sslmode=verify-full`` needs the CA that signed the
+    # PostgreSQL server certificate; without ``sslrootcert`` libpq looks for
+    # ~/.postgresql/root.crt, which a service account rarely has.
+    for name in ("sslrootcert", "sslcert", "sslkey"):
+        value = getattr(settings, name)
+        if value:
+            options[name] = value
     return DatabaseConfig(
         host=settings.host,
         port=settings.port,
@@ -475,7 +620,7 @@ def _settings_to_config(settings: DatabaseSettings) -> DatabaseConfig:
         max_connections=settings.max_connections,
         connection_timeout=settings.connection_timeout,
         max_idle_time=settings.max_idle_seconds,
-        options={"prepare_threshold": None},
+        options=options,
     )
 
 
@@ -515,6 +660,8 @@ def init_database(settings: DatabaseSettings) -> Database:
         auto_setup=settings.auto_setup,
         interactive=False,
     )
+
+    install_writable_check(db)
 
     log.info(
         "Database initialised successfully (pool: min=%d max=%d timeout=%.1fs)",

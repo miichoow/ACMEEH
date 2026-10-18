@@ -554,6 +554,30 @@ class TestContainerMetrics:
 
             assert c.metrics_collector is mock_mc_cls.return_value
 
+    def test_collector_reaches_the_background_workers(self, mock_db):
+        """The workers' counters (acmeeh_cleanup_runs_total, ...) stayed empty: never wired."""
+        settings = _make_settings(
+            **{
+                "metrics.enabled": True,
+                "challenges.background_worker.enabled": True,
+            }
+        )
+
+        with patch("acmeeh.metrics.collector.MetricsCollector") as mock_mc_cls:
+            mock_mc_cls.return_value = MagicMock(name="MetricsCollector")
+            c = Container(mock_db, settings)
+
+            collector = mock_mc_cls.return_value
+            assert c.cleanup_worker._metrics is collector
+            assert c.expiration_worker._metrics is collector
+            assert c.challenge_worker._metrics is collector
+
+    def test_workers_have_no_collector_when_metrics_disabled(self, mock_db, base_settings):
+        c = Container(mock_db, base_settings)
+
+        assert c.cleanup_worker._metrics is None
+        assert c.expiration_worker._metrics is None
+
     def test_metrics_backpatch_into_services(self, mock_db):
         settings = _make_settings(**{"metrics.enabled": True})
 

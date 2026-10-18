@@ -543,8 +543,81 @@ class TestServerValidation:
             )
 
 
+class TestDatabaseSslFiles:
+    """``database.sslrootcert`` / ``sslcert`` / ``sslkey`` for TLS to PostgreSQL."""
+
+    def test_default_is_empty(self, tmp_path):
+        db = _make_config(tmp_path).settings.database
+        assert (db.sslrootcert, db.sslcert, db.sslkey) == ("", "", "")
+
+    def test_custom_values(self, tmp_path):
+        config = _make_config(
+            tmp_path,
+            {
+                "database": {
+                    "database": "acmeeh_test",
+                    "user": "testuser",
+                    "sslmode": "verify-full",
+                    "sslrootcert": "/etc/acmeeh/pg-ca.pem",
+                    "sslcert": "/etc/acmeeh/client.crt",
+                    "sslkey": "/etc/acmeeh/client.key",
+                },
+            },
+        )
+        db = config.settings.database
+        assert db.sslrootcert == "/etc/acmeeh/pg-ca.pem"
+        assert db.sslcert == "/etc/acmeeh/client.crt"
+        assert db.sslkey == "/etc/acmeeh/client.key"
+
+
+class TestServerThreads:
+    """``server.threads``: request concurrency per worker (gthread only)."""
+
+    def test_default_is_one(self, tmp_path):
+        config = _make_config(tmp_path)
+        assert config.settings.server.threads == 1
+
+    def test_custom_value(self, tmp_path):
+        config = _make_config(
+            tmp_path,
+            {"server": {"external_url": "https://acme.example.com", "threads": 4}},
+        )
+        assert config.settings.server.threads == 4
+
+    @pytest.mark.parametrize("value", [0, -1])
+    def test_must_be_positive(self, tmp_path, value):
+        with pytest.raises((ConfigValidationError, ValueError), match="minimum|threads"):
+            _make_config(
+                tmp_path,
+                {"server": {"external_url": "https://acme.example.com", "threads": value}},
+            )
+
+
 class TestWarnings:
     """Test configuration warnings (non-fatal)."""
+
+    def test_gthread_with_a_single_thread_warns(self, tmp_path, caplog):
+        """gthread defaults to 1 thread: one request at a time per worker, health checks included."""
+        with caplog.at_level(logging.WARNING):
+            _make_config(
+                tmp_path,
+                {"server": {"external_url": "https://acme.example.com", "worker_class": "gthread"}},
+            )
+        assert "server.threads" in caplog.text
+
+    def test_gthread_with_several_threads_has_no_single_thread_warning(self, tmp_path, caplog):
+        with caplog.at_level(logging.WARNING):
+            _make_config(
+                tmp_path,
+                {
+                    "server": {
+                        "external_url": "https://acme.example.com",
+                        "worker_class": "gthread",
+                        "threads": 4,
+                    }
+                },
+            )
+        assert "one request at a time" not in caplog.text
 
     def test_memory_rate_limiter_multi_worker_warns(self, tmp_path, caplog):
         """Memory rate limiter with multiple workers should warn."""

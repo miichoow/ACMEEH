@@ -37,6 +37,7 @@ class ServerSettings:
     keepalive: int
     max_requests: int
     max_requests_jitter: int
+    threads: int
 
 
 def _build_server(data: dict | None) -> ServerSettings:
@@ -52,6 +53,7 @@ def _build_server(data: dict | None) -> ServerSettings:
         keepalive=d.get("keepalive", 2),
         max_requests=d.get("max_requests", 0),
         max_requests_jitter=d.get("max_requests_jitter", 0),
+        threads=d.get("threads", 1),
     )
 
 
@@ -835,6 +837,9 @@ class DatabaseSettings:
     user: str
     password: str
     sslmode: str
+    sslrootcert: str
+    sslcert: str
+    sslkey: str
     min_connections: int
     max_connections: int
     connection_timeout: float
@@ -851,6 +856,9 @@ def _build_database(data: dict | None) -> DatabaseSettings:
         user=d["user"],
         password=d.get("password", ""),
         sslmode=d.get("sslmode", "prefer"),
+        sslrootcert=d.get("sslrootcert", ""),
+        sslcert=d.get("sslcert", ""),
+        sslkey=d.get("sslkey", ""),
         min_connections=d.get("min_connections", 5),
         max_connections=d.get("max_connections", 50),
         connection_timeout=d.get("connection_timeout", 10.0),

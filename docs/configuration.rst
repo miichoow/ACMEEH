@@ -65,6 +65,12 @@ HTTP server settings for both development and gunicorn production modes.
      - string
      - ``sync``
      - Gunicorn worker class. Supported values: ``sync``, ``gthread``, ``gevent``
+   * - ``threads``
+     - integer
+     - ``1``
+     - Concurrent requests per worker, ``gthread`` only (ignored by other worker classes).
+       gunicorn runs a single thread per ``gthread`` worker by default, which means one request at
+       a time per worker.  Size ``database.max_connections`` as ``workers x threads + 5``.
    * - ``timeout``
      - integer
      - ``30``
@@ -939,6 +945,20 @@ PostgreSQL connection settings.
      - ``prefer``
      - PostgreSQL SSL mode. Supported values: ``disable``, ``allow``, ``prefer``,
        ``require``, ``verify-ca``, ``verify-full``
+   * - ``sslrootcert``
+     - string
+     - ``""``
+     - Path of the CA certificate that signed the PostgreSQL server certificate.  Required for
+       ``sslmode: verify-ca`` and ``verify-full`` unless libpq finds it elsewhere
+       (``~/.postgresql/root.crt``, ``PGSSLROOTCERT``)
+   * - ``sslcert``
+     - string
+     - ``""``
+     - Client certificate, when PostgreSQL requires certificate authentication
+   * - ``sslkey``
+     - string
+     - ``""``
+     - Private key of ``sslcert``
    * - ``min_connections``
      - integer
      - ``5``
@@ -950,7 +970,9 @@ PostgreSQL connection settings.
    * - ``connection_timeout``
      - float
      - ``10.0``
-     - Connection timeout in seconds
+     - Seconds a request waits for a pool connection before answering 503 with ``Retry-After``.
+       During a database failover this is how long requests are held; ``/readyz`` and
+       ``/healthz`` use their own, shorter, 2 s probe
    * - ``max_idle_seconds``
      - float
      - ``300.0``

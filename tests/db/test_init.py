@@ -22,6 +22,9 @@ def _make_db_settings(
     connection_timeout=5.0,
     auto_setup=True,
     max_idle_seconds=300.0,
+    sslrootcert="",
+    sslcert="",
+    sslkey="",
 ):
     return SimpleNamespace(
         host=host,
@@ -35,6 +38,9 @@ def _make_db_settings(
         connection_timeout=connection_timeout,
         auto_setup=auto_setup,
         max_idle_seconds=max_idle_seconds,
+        sslrootcert=sslrootcert,
+        sslcert=sslcert,
+        sslkey=sslkey,
     )
 
 
@@ -175,3 +181,50 @@ class TestInitDatabaseNew:
             auto_setup=False,
             interactive=False,
         )
+
+
+# ---------------------------------------------------------------------------
+# TLS certificate files (sslmode=verify-full needs a root certificate)
+# ---------------------------------------------------------------------------
+
+
+class TestSslFiles:
+    @patch("acmeeh.db.init.DatabaseConfig")
+    def test_ssl_files_are_passed_as_connection_options(self, mock_db_config_class):
+        from acmeeh.db.init import _settings_to_config
+
+        settings = _make_db_settings(
+            sslmode="verify-full",
+            sslrootcert="/etc/acmeeh/pg-ca.pem",
+            sslcert="/etc/acmeeh/client.crt",
+            sslkey="/etc/acmeeh/client.key",
+        )
+        _settings_to_config(settings)
+
+        options = mock_db_config_class.call_args.kwargs["options"]
+        assert options == {
+            "prepare_threshold": None,
+            "sslrootcert": "/etc/acmeeh/pg-ca.pem",
+            "sslcert": "/etc/acmeeh/client.crt",
+            "sslkey": "/etc/acmeeh/client.key",
+        }
+
+    @patch("acmeeh.db.init.DatabaseConfig")
+    def test_only_the_configured_files_are_passed(self, mock_db_config_class):
+        from acmeeh.db.init import _settings_to_config
+
+        _settings_to_config(_make_db_settings(sslmode="verify-full", sslrootcert="/pg-ca.pem"))
+
+        options = mock_db_config_class.call_args.kwargs["options"]
+        assert options == {"prepare_threshold": None, "sslrootcert": "/pg-ca.pem"}
+
+    def test_the_options_reach_the_libpq_connection_parameters(self):
+        """End to end with the real PyPGKit config: they must end up in the connection kwargs."""
+        from acmeeh.db.init import _settings_to_config
+
+        config = _settings_to_config(
+            _make_db_settings(sslmode="verify-full", sslrootcert="/pg-ca.pem"),
+        )
+        kwargs = config.get_connection_kwargs()
+        assert kwargs["sslmode"] == "verify-full"
+        assert kwargs["sslrootcert"] == "/pg-ca.pem"

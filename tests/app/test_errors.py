@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import flask
+import psycopg
 import pytest
 
 from acmeeh.app.errors import (
@@ -224,3 +225,87 @@ class TestRegisterErrorHandlers:
             assert resp.content_type == PROBLEM_CONTENT_TYPE
             data = json.loads(resp.data)
             assert data["type"] == SERVER_INTERNAL
+
+
+# ---------------------------------------------------------------------------
+# TestTransientDatabaseErrors
+# ---------------------------------------------------------------------------
+
+
+def _wrapped(exc: Exception) -> Exception:
+    """Raise-and-catch *exc* as the ``__cause__`` of a service-layer error."""
+    try:
+        try:
+            raise exc
+        except Exception as inner:
+            raise RuntimeError("repository failure") from inner
+    except RuntimeError as outer:
+        return outer
+
+
+class TestTransientDatabaseErrors:
+    """A database failover must surface as a retryable 503, not a 500."""
+
+    @pytest.fixture
+    def make_client(self):
+        def _make(exc: Exception):
+            app = flask.Flask(__name__)
+            app.config["TESTING"] = True
+            register_error_handlers(app)
+
+            @app.route("/boom")
+            def boom():
+                raise exc
+
+            return app.test_client()
+
+        return _make
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            psycopg.errors.AdminShutdown("terminating connection due to administrator command"),
+            psycopg.errors.CrashShutdown("terminating connection due to crash of another server"),
+            psycopg.errors.CannotConnectNow("the database system is starting up"),
+            psycopg.OperationalError("consuming input failed: server closed the connection"),
+            psycopg.errors.ReadOnlySqlTransaction(
+                "cannot execute INSERT in a read-only transaction",
+            ),
+            psycopg.InterfaceError("the connection is closed"),
+        ],
+        ids=lambda e: type(e).__name__,
+    )
+    def test_connection_loss_is_503_with_retry_after(self, make_client, exc):
+        resp = make_client(exc).get("/boom")
+        assert resp.status_code == 503
+        assert resp.content_type == PROBLEM_CONTENT_TYPE
+        assert resp.headers["Retry-After"] == "5"
+        assert json.loads(resp.data)["type"] == SERVER_INTERNAL
+
+    def test_wrapped_cause_is_503(self, make_client):
+        exc = _wrapped(psycopg.errors.AdminShutdown("terminating connection"))
+        resp = make_client(exc).get("/boom")
+        assert resp.status_code == 503
+        assert resp.headers["Retry-After"] == "5"
+
+    def test_connection_loss_logged_as_warning_without_traceback(self, make_client, caplog):
+        with caplog.at_level("WARNING", logger="acmeeh.app.errors"):
+            make_client(psycopg.OperationalError("server closed the connection")).get("/boom")
+        records = [r for r in caplog.records if r.name == "acmeeh.app.errors"]
+        assert records
+        assert all(r.levelname == "WARNING" and r.exc_info is None for r in records)
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            psycopg.errors.UniqueViolation("duplicate key value"),
+            psycopg.errors.SyntaxError("syntax error at or near"),
+            psycopg.InterfaceError("cursor not bound to a connection"),
+            RuntimeError("boom"),
+        ],
+        ids=lambda e: type(e).__name__,
+    )
+    def test_genuine_errors_stay_500(self, make_client, exc):
+        resp = make_client(exc).get("/boom")
+        assert resp.status_code == 500
+        assert "Retry-After" not in resp.headers

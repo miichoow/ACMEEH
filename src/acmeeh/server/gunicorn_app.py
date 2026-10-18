@@ -111,6 +111,10 @@ def run_gunicorn(app: Flask, settings: ServerSettings) -> None:
             self.cfg.set("bind", f"{s.bind}:{s.port}")
             self.cfg.set("workers", s.workers)
             self.cfg.set("worker_class", s.worker_class)
+            if s.worker_class == "gthread":
+                # gunicorn defaults to 1 thread per gthread worker, i.e. one request at a time:
+                # a stalled database call then blocks the worker, health checks included.
+                self.cfg.set("threads", s.threads)
             self.cfg.set("timeout", s.timeout)
             self.cfg.set("graceful_timeout", s.graceful_timeout)
             self.cfg.set("keepalive", s.keepalive)

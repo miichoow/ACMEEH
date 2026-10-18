@@ -149,6 +149,35 @@ def _is_pool_timeout(exc: Exception) -> bool:
     return False
 
 
+# psycopg classes that mean "the database is not reachable or not writable right
+# now" -- what a failover looks like to a request in flight.  OperationalError is
+# the base of AdminShutdown (Patroni stopping the old primary), CrashShutdown,
+# CannotConnectNow, "server closed the connection unexpectedly", deadlocks and
+# query timeouts; ReadOnlySqlTransaction is a write that reached a demoted node.
+_TRANSIENT_DB_CLASSES = frozenset({"OperationalError", "ReadOnlySqlTransaction"})
+
+
+def _is_transient_db_error(exc: Exception) -> bool:
+    """Check whether *exc* (or its ``__cause__`` chain) is a transient psycopg failure.
+
+    Matches on class names within the ``psycopg`` package, for the same reason as
+    :func:`_is_pool_timeout`.  Data errors (integrity, syntax) are deliberately
+    not matched: retrying them would never succeed.
+    """
+    current: BaseException | None = exc
+    while current is not None:
+        for cls in type(current).__mro__:
+            if cls.__module__.split(".")[0] != "psycopg":
+                continue
+            if cls.__name__ in _TRANSIENT_DB_CLASSES:
+                return True
+            # A pooled connection found closed after its server went away.
+            if cls.__name__ == "InterfaceError" and "closed" in str(current):
+                return True
+        current = current.__cause__
+    return False
+
+
 def register_error_handlers(app: Flask) -> None:
     """Attach handlers that produce RFC 7807 responses for all errors."""
 
@@ -176,6 +205,19 @@ def register_error_handlers(app: Flask) -> None:
             problem = AcmeProblem(
                 SERVER_INTERNAL,
                 "Server is temporarily overloaded. Please retry.",
+                503,
+                headers={"Retry-After": "5"},
+            )
+            return problem.to_response()
+
+        # Database failover / restart: the connection died under this request.
+        # Retryable, so 503 + Retry-After rather than a 500 that clients treat
+        # as a server bug.  WARNING without traceback, like the pool timeout.
+        if _is_transient_db_error(exc):
+            log.warning("Database unavailable during request: %s: %s", type(exc).__name__, exc)
+            problem = AcmeProblem(
+                SERVER_INTERNAL,
+                "Database temporarily unavailable. Please retry.",
                 503,
                 headers={"Retry-After": "5"},
             )

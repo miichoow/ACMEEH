@@ -172,6 +172,69 @@ class TestCertIDEncoding:
         assert result is None
 
 
+def _rfc9773_cert_id(aki: bytes, serial: int) -> str:
+    """certID as an ACME client builds it (RFC 9773 s4.1).
+
+    ``base64url(AKI keyIdentifier) "." base64url(DER INTEGER value octets of the serial)``
+    -- two separately encoded parts, no padding.  A serial whose high bit is set gets a
+    leading 0x00 octet (two's complement), exactly as in the certificate.
+    """
+    octets = serial.to_bytes((serial.bit_length() + 7) // 8 or 1, "big")
+    if octets[0] & 0x80:
+        octets = b"\x00" + octets
+    b64 = lambda raw: base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")  # noqa: E731
+    return f"{b64(aki)}.{b64(octets)}"
+
+
+class TestRfc9773CertID:
+    """Real ACME clients (lego, certbot, ...) send the RFC 9773 form."""
+
+    AKI = bytes.fromhex("34d6b9c0c0cff75cac870 e0c1b46dc7541a64a4a".replace(" ", ""))
+
+    @pytest.mark.parametrize(
+        ("serial", "stored"),
+        [
+            (0x0249, "249"),  # odd number of hex digits: stored without leading zero
+            (0x248, "248"),
+            (0xDEADBEEF, "deadbeef"),  # high bit set: DER adds a 0x00 octet
+            (0x7F, "7f"),
+            (0x80, "80"),
+            ((1 << 159) - 12345, format((1 << 159) - 12345, "x")),  # 20-octet random-style serial
+        ],
+    )
+    def test_serial_is_found(self, cert_repo, service, serial, stored):
+        cert_repo.add(
+            FakeCert(
+                id=uuid4(),
+                serial_number=stored,
+                not_before_cert=datetime.now(UTC) - timedelta(days=10),
+                not_after_cert=datetime.now(UTC) + timedelta(days=80),
+            ),
+        )
+        result = service.get_renewal_info(_rfc9773_cert_id(self.AKI, serial))
+        assert result is not None
+        assert "suggestedWindow" in result
+
+    def test_lego_vector(self, cert_repo, service):
+        """The exact certID lego sent for serial 0x0249 against a test cluster."""
+        cert_repo.add(
+            FakeCert(
+                id=uuid4(),
+                serial_number="249",
+                not_before_cert=datetime.now(UTC) - timedelta(days=1),
+                not_after_cert=datetime.now(UTC) + timedelta(days=89),
+            ),
+        )
+        assert service.get_renewal_info("NNa5wM_M91yshOMB8iKUGDbc8Vo.Akk") is not None
+
+    def test_unknown_serial_returns_none(self, service):
+        assert service.get_renewal_info(_rfc9773_cert_id(self.AKI, 0xFFFF)) is None
+
+    @pytest.mark.parametrize("cert_id", ["abc.", ".abc", "a.b.c", "AKI.!!!not-base64!!!", "."])
+    def test_malformed_returns_none_not_an_exception(self, service, cert_id):
+        assert service.get_renewal_info(cert_id) is None
+
+
 class TestRevokedCert:
     """Revoked cert -> window starts now."""
 

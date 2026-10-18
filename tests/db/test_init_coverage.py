@@ -670,6 +670,9 @@ class TestInitDatabaseWarnings:
         settings.max_connections = 5  # < 10
         settings.connection_timeout = 5.0
         settings.max_idle_seconds = 300
+        settings.sslrootcert = ""
+        settings.sslcert = ""
+        settings.sslkey = ""
         settings.auto_setup = False
 
         with patch("acmeeh.db.init.log") as mock_log:
@@ -694,6 +697,9 @@ class TestInitDatabaseWarnings:
         settings.max_connections = 20
         settings.connection_timeout = 30.0  # > 15
         settings.max_idle_seconds = 300
+        settings.sslrootcert = ""
+        settings.sslcert = ""
+        settings.sslkey = ""
         settings.auto_setup = False
 
         with patch("acmeeh.db.init.log") as mock_log:
@@ -718,6 +724,9 @@ class TestInitDatabaseWarnings:
         settings.max_connections = 20
         settings.connection_timeout = 5.0
         settings.max_idle_seconds = 300
+        settings.sslrootcert = ""
+        settings.sslcert = ""
+        settings.sslkey = ""
         settings.auto_setup = True
 
         result = init_database(settings)

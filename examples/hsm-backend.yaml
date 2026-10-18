@@ -11,6 +11,7 @@ server:
   port: 8443
   workers: 4
   worker_class: gthread
+  threads: 4
 database:
   host: db.corp.internal
   database: acmeeh

@@ -611,7 +611,9 @@ def _register_health(app: Flask) -> None:  # noqa: C901, PLR0915
                 result["status"] = "degraded"
             else:
                 try:
-                    container.db.fetch_value("SELECT 1")
+                    from acmeeh.db.init import probe_database  # noqa: PLC0415
+
+                    probe_database(container.db)
                     checks["database"] = "ok"
                 except Exception:  # noqa: BLE001
                     checks["database"] = "error"
@@ -711,7 +713,9 @@ def _register_health(app: Flask) -> None:  # noqa: C901, PLR0915
         if _health == "critical":
             return _ready_err("Connection pool exhausted")
         try:
-            container.db.fetch_value("SELECT 1")
+            from acmeeh.db.init import probe_database  # noqa: PLC0415
+
+            probe_database(container.db)
         except Exception:  # noqa: BLE001
             return _ready_err("Database not connected")
 

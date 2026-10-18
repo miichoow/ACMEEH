@@ -407,11 +407,18 @@ class AcmeehConfig(ConfigKit):
         workers = server.get("workers", 4)
         worker_class = server.get("worker_class", "sync")
         if worker_class == "gthread":
+            threads = server.get("threads", 1)
             warnings.append(
                 "server.worker_class='gthread' — ensure database.max_connections "
-                "accounts for gunicorn's threads-per-worker setting "
-                "(recommended: workers × threads + 5)",
+                "accounts for server.threads "
+                f"(recommended: workers × threads + 5; currently {workers} × {threads})",
             )
+            if threads == 1:
+                warnings.append(
+                    "server.worker_class='gthread' with server.threads=1 serves one request "
+                    "at a time per worker: a stalled database call blocks the worker, health "
+                    "checks included.  Set server.threads (for example 4).",
+                )
         if proxy.get("enabled") and not proxy.get("trusted_proxies"):
             errors.append(
                 "proxy.enabled is true but proxy.trusted_proxies is empty — "

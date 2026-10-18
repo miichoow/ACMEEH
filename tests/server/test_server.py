@@ -38,6 +38,7 @@ class _FakeServerSettings:
     keepalive: int = 2
     max_requests: int = 0
     max_requests_jitter: int = 0
+    threads: int = 1
 
 
 def _make_settings(**overrides) -> _FakeServerSettings:
@@ -376,6 +377,46 @@ class TestRunGunicornSuccess:
         assert captured_cfg["workers"] == 8
         assert captured_cfg["worker_class"] == "gthread"
         assert captured_cfg["timeout"] == 60
+
+    def test_threads_forwarded_for_gthread(self):
+        """gthread serves ``threads`` concurrent requests per worker (gunicorn defaults to 1)."""
+        FakeBase = self._make_fake_base_application()
+        captured_cfg = {}
+
+        def capturing_run(self):
+            captured_cfg.update(self.cfg.settings)
+
+        FakeBase.run = capturing_run
+        fake_modules = self._install_fake_gunicorn(FakeBase)
+
+        from acmeeh.server.gunicorn_app import run_gunicorn
+
+        settings = _make_settings(worker_class="gthread", threads=4)
+
+        with patch.dict(sys.modules, fake_modules):
+            run_gunicorn(MagicMock(), settings)
+
+        assert captured_cfg["threads"] == 4
+
+    def test_threads_not_forwarded_for_other_worker_classes(self):
+        """For sync/gevent ``threads`` is ignored: gunicorn would silently switch a sync worker."""
+        FakeBase = self._make_fake_base_application()
+        captured_cfg = {}
+
+        def capturing_run(self):
+            captured_cfg.update(self.cfg.settings)
+
+        FakeBase.run = capturing_run
+        fake_modules = self._install_fake_gunicorn(FakeBase)
+
+        from acmeeh.server.gunicorn_app import run_gunicorn
+
+        settings = _make_settings(worker_class="sync", threads=8)
+
+        with patch.dict(sys.modules, fake_modules):
+            run_gunicorn(MagicMock(), settings)
+
+        assert "threads" not in captured_cfg
 
     def test_graceful_timeout_and_keepalive(self):
         """graceful_timeout and keepalive are forwarded."""

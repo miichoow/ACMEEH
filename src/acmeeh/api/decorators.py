@@ -56,6 +56,7 @@ _NONCE_SKIP_PREFIXES = (
 # client holding a cached nonce can retry within the nonce TTL; long
 # enough that a brief maintenance window completes between retries.
 _MAINTENANCE_RETRY_AFTER_SECONDS = 60
+_DATABASE_RETRY_AFTER_SECONDS = 5
 
 
 def add_acme_headers(response):
@@ -181,6 +182,22 @@ def require_jws(
                             "Retry-After": str(_MAINTENANCE_RETRY_AFTER_SECONDS),
                         },
                     )
+
+            # 5c. Database unreachable: refuse BEFORE the nonce is consumed.  The request then
+            # fails fast (no worker held for the pool timeout) and the client can replay the very
+            # same signed request once the database is back; failing later would have burned the
+            # nonce and turned the replay into badNonce.
+            db_gate = getattr(container, "db_gate", None)
+            if db_gate is not None:
+                try:
+                    db_gate.check()
+                except Exception as exc:
+                    raise AcmeProblem(
+                        SERVER_INTERNAL,
+                        "Database temporarily unavailable. Please retry.",
+                        status=503,
+                        headers={"Retry-After": str(_DATABASE_RETRY_AFTER_SECONDS)},
+                    ) from exc
 
             # 6. Consume nonce
             if not container.nonce_service.consume(jws.nonce):

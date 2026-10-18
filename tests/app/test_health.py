@@ -329,6 +329,57 @@ class TestReadyzDBDown:
         assert "Database not connected" in data["reason"]
 
 
+def _pool_that_cannot_serve():
+    """A raw pool whose checkout times out (database down / only a standby reachable)."""
+    from psycopg_pool import PoolTimeout
+
+    pool = MagicMock()
+    pool.get_stats.return_value = {
+        "pool_size": 5,
+        "pool_available": 4,
+        "requests_waiting": 0,
+        "pool_max": 10,
+    }
+    pool.connection.side_effect = PoolTimeout("couldn't get a connection after 2.00 sec")
+    return pool
+
+
+class TestProbesFailFast:
+    """The DB probe must not wait for ``connection_timeout``: LB checks time out first."""
+
+    def test_readyz_503_when_the_pool_cannot_serve(self):
+        container = _make_container()
+        container.db._pool = _pool_that_cannot_serve()
+        client = _make_app(container=container).test_client()
+
+        resp = client.get("/readyz")
+
+        assert resp.status_code == 503
+        assert "Database not connected" in resp.get_json()["reason"]
+        container.db.fetch_value.assert_not_called()  # the blocking path is not taken
+
+    def test_readyz_probe_uses_a_short_timeout(self):
+        from acmeeh.db.init import PROBE_TIMEOUT_SECONDS
+
+        container = _make_container()
+        container.db._pool = _pool_that_cannot_serve()
+        _make_app(container=container).test_client().get("/readyz")
+
+        container.db._pool.connection.assert_called_once_with(timeout=PROBE_TIMEOUT_SECONDS)
+
+    def test_healthz_reports_database_error_when_the_pool_cannot_serve(self):
+        container = _make_container()
+        container.db._pool = _pool_that_cannot_serve()
+        client = _make_app(container=container).test_client()
+
+        resp = client.get("/healthz")
+        data = resp.get_json()
+
+        assert resp.status_code == 503
+        assert data["checks"]["database"] == "error"
+        container.db.fetch_value.assert_not_called()
+
+
 class TestReadyzCANotReady:
     """GET /readyz when the CA backend fails its startup check."""
 

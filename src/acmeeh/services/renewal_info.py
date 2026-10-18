@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -16,6 +17,31 @@ if TYPE_CHECKING:
     from acmeeh.repositories.certificate import CertificateRepository
 
 log = logging.getLogger(__name__)
+
+_BASE64URL = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def _serial_from_rfc9773_cert_id(cert_id: str) -> str | None:
+    """Extract the serial number (lowercase hex, no leading zeros) from an ARI certID.
+
+    RFC 9773 s4.1: ``base64url(AKI keyIdentifier) "." base64url(serial)`` where the serial
+    is the DER INTEGER *value* octets (big endian; a leading 0x00 octet when the high bit
+    is set).  The two parts are encoded separately, so the string as a whole is not valid
+    base64url.  Serials are stored as ``format(serial, "x")``, hence the normalisation.
+
+    Returns ``None`` when *cert_id* is not of that form.  The AKI part is not checked
+    against the issuing CA: the serial is unique within this server's CA.
+    """
+    if cert_id.count(".") != 1:
+        return None
+    _aki, _, serial_part = cert_id.partition(".")
+    if not _BASE64URL.fullmatch(serial_part):
+        return None
+    try:
+        octets = base64.urlsafe_b64decode(serial_part + "=" * (-len(serial_part) % 4))
+    except ValueError:
+        return None
+    return format(int.from_bytes(octets, "big"), "x") if octets else None
 
 
 class RenewalInfoService:
@@ -44,16 +70,20 @@ class RenewalInfoService:
             Renewal info with suggestedWindow, or None if cert not found.
 
         """
-        # Parse certID: base64url decode, split on '.'
-        try:
-            decoded = base64.urlsafe_b64decode(cert_id + "==").decode("ascii")
-            parts = decoded.split(".")
-            if len(parts) != 2:
-                return None
-            serial_hex = parts[1]
-        except Exception:
-            # Try treating it directly as a serial
-            serial_hex = cert_id
+        serial_hex = _serial_from_rfc9773_cert_id(cert_id)
+        if serial_hex is None and "." in cert_id:
+            return None  # looks like an RFC 9773 certID but is malformed
+        if serial_hex is None:
+            # Not RFC 9773: the pre-RFC form (the whole "AKI.serial" string base64url
+            # encoded), or the serial itself.  Kept for existing callers.
+            try:
+                decoded = base64.urlsafe_b64decode(cert_id + "==").decode("ascii")
+                parts = decoded.split(".")
+                if len(parts) != 2:
+                    return None
+                serial_hex = parts[1]
+            except Exception:  # noqa: BLE001
+                serial_hex = cert_id
 
         cert = self._certs.find_by_serial(serial_hex)
         if cert is None:

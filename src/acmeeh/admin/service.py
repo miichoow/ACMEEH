@@ -298,6 +298,12 @@ class AdminUserService:
         """Create the initial admin user if no users exist.
 
         Returns the plain password if a user was created, None otherwise.
+
+        Safe when several instances start at once (first deployment of an HA
+        cluster): "count then insert" is not atomic, so two instances can both
+        see an empty table.  The unique constraint on ``username`` lets exactly
+        one insert win; the others find the table non-empty afterwards and
+        return ``None`` instead of crashing at startup.
         """
         if self._users.count_all() > 0:
             return None
@@ -313,7 +319,13 @@ class AdminUserService:
             role=AdminRole.ADMIN,
             enabled=True,
         )
-        user = self._users.create(user)
+        try:
+            user = self._users.create(user)
+        except Exception:
+            if self._users.count_all() > 0:
+                log.info("Initial admin created concurrently by another instance")
+                return None
+            raise  # a real failure (database down, ...), not a lost race
 
         self._log_action(
             None,

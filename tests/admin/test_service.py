@@ -213,6 +213,40 @@ class TestBootstrapAdmin:
         assert audit_repo.entries[0].action == "bootstrap_admin"
 
 
+class _RacingUserRepo(StubAdminUserRepo):
+    """Another instance inserts the admin between our count and our insert."""
+
+    def __init__(self, *, rival_wins: bool):
+        super().__init__()
+        self._rival_wins = rival_wins
+        self._counts = 0
+
+    def count_all(self) -> int:
+        self._counts += 1
+        # first call (our "is it empty?" check): empty; after the failed insert: the rival's row
+        return 0 if self._counts == 1 or not self._rival_wins else 1
+
+    def create(self, entity):
+        raise RuntimeError('duplicate key value violates unique constraint "users_username_key"')
+
+
+class TestBootstrapAdminConcurrentStart:
+    """All instances of an HA deployment may start at the same moment (first deployment)."""
+
+    def test_losing_the_race_is_not_an_error(self, audit_repo, settings):
+        service = AdminUserService(_RacingUserRepo(rival_wins=True), audit_repo, settings)
+
+        assert service.bootstrap_admin("admin@example.com") is None
+        # the winner logs the action and emails the password; the loser does neither
+        assert audit_repo.entries == []
+
+    def test_a_genuine_failure_is_still_raised(self, audit_repo, settings):
+        service = AdminUserService(_RacingUserRepo(rival_wins=False), audit_repo, settings)
+
+        with pytest.raises(RuntimeError, match="users_username_key"):
+            service.bootstrap_admin("admin@example.com")
+
+
 class TestAuthenticate:
     def test_valid_credentials(self, service):
         user, pw = service.create_user("testuser", "test@example.com")

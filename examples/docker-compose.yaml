@@ -10,6 +10,7 @@ server:
   port: 8443
   workers: 2
   worker_class: gthread
+  threads: 4
 database:
   host: postgres
   port: 5432
