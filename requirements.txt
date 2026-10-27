@@ -10,6 +10,7 @@ dnspython>=2.8,<3
 
 # Database
 psycopg[binary]>=3.3,<4
+psycopg-pool>=3.3.3,<4
 
 # Configuration & database toolkit
 pyConfigKit>=1.1,<2
